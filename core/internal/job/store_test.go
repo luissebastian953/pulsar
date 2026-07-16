@@ -4,81 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"testing"
-	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/pgtest"
 )
 
-// testStore gives each test its own Postgres schema so packages (and tests)
-// sharing PULSAR_TEST_DATABASE_URL cannot collide.
 func testStore(t *testing.T, schema string) *job.Store {
-	return job.NewStore(testPool(t, schema))
-}
-
-func testPool(t *testing.T, schema string) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("PULSAR_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("PULSAR_TEST_DATABASE_URL not set")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// public stays on the path so pg_trgm's operator classes resolve
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-
-	files, err := filepath.Glob("../../../db/migrations/*.sql")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no migrations found: %v", err)
-	}
-	sort.Strings(files)
-
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Release()
-	// serialize schema setup across parallel test packages — CREATE
-	// EXTENSION IF NOT EXISTS races with itself; the lock is session-scoped
-	// so setup must run on this one connection
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(727272)"); err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Exec(ctx, "SELECT pg_advisory_unlock(727272)")
-
-	stmts := []string{
-		fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema),
-		fmt.Sprintf("CREATE SCHEMA %s", schema),
-	}
-	for _, f := range files {
-		sql, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		stmts = append(stmts, string(sql))
-	}
-	for _, sql := range stmts {
-		if _, err := conn.Exec(ctx, sql); err != nil {
-			t.Fatalf("test schema setup: %v", err)
-		}
-	}
-	return pool
+	return job.NewStore(pgtest.Pool(t, schema))
 }
 
 var (

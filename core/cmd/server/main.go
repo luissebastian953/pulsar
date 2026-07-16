@@ -17,6 +17,7 @@ import (
 	"pulsar/core/internal/comfy"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/nltag"
 	"pulsar/core/internal/tags"
 	"pulsar/core/internal/worker"
 	"pulsar/core/internal/workflow"
@@ -85,6 +86,34 @@ func main() {
 	store := job.NewStore(pool)
 	tagStore := tags.NewStore(pool)
 	broker := job.NewBroker()
+
+	// the LLM decomposes, the tag DB grounds; without a provider key the
+	// endpoint 503s and everything else runs normally
+	var decomposer nltag.Decomposer
+	switch provider := envOr("TRANSLATE_PROVIDER", "claude"); provider {
+	case "claude":
+		if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+			decomposer = nltag.NewClaudeDecomposer(key, envOr("ANTHROPIC_MODEL", "claude-opus-4-8"), "")
+		} else {
+			log.Printf("nltag: ANTHROPIC_API_KEY not set — POST /translate disabled")
+		}
+	case "deepseek":
+		if key := os.Getenv("DEEPSEEK_API_KEY"); key != "" {
+			decomposer = nltag.NewDeepSeekDecomposer(key,
+				envOr("DEEPSEEK_MODEL", "deepseek-v4-flash"), os.Getenv("DEEPSEEK_BASE_URL"))
+		} else {
+			log.Printf("nltag: DEEPSEEK_API_KEY not set — POST /translate disabled")
+		}
+	default:
+		log.Fatalf("invalid TRANSLATE_PROVIDER %q (want claude or deepseek)", provider)
+	}
+	var translator *nltag.Translator
+	if decomposer != nil {
+		translator = &nltag.Translator{
+			Decomposer: decomposer,
+			Grounder:   &nltag.Grounder{Store: tagStore},
+		}
+	}
 	checker := compliance.Stub{} // phase 4 replaces the impl; the call sites stay
 
 	// one worker per ComfyUI process: a process runs one workflow at a time
@@ -100,7 +129,7 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tags: tagStore, Tpl: tpl,
+			Tags: tagStore, Translator: translator, Tpl: tpl,
 			Cfg: api.Config{Lineage: lineage, Checkpoint: checkpoint},
 		}).Handler(),
 	}

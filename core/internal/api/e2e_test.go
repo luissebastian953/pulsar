@@ -7,13 +7,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -27,72 +23,16 @@ import (
 	"pulsar/core/internal/comfy/comfytest"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/nltag"
+	"pulsar/core/internal/pgtest"
 	"pulsar/core/internal/tags"
 	"pulsar/core/internal/worker"
 	"pulsar/core/internal/workflow"
 )
 
-func testPool(t *testing.T, schema string) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("PULSAR_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("PULSAR_TEST_DATABASE_URL not set")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// public stays on the path so pg_trgm's operator classes resolve
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-
-	files, err := filepath.Glob("../../../db/migrations/*.sql")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no migrations found: %v", err)
-	}
-	sort.Strings(files)
-
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Release()
-	// serialize schema setup across parallel test packages — CREATE
-	// EXTENSION IF NOT EXISTS races with itself; the lock is session-scoped
-	// so setup must run on this one connection
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(727272)"); err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Exec(ctx, "SELECT pg_advisory_unlock(727272)")
-
-	stmts := []string{
-		fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema),
-		fmt.Sprintf("CREATE SCHEMA %s", schema),
-	}
-	for _, f := range files {
-		sql, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		stmts = append(stmts, string(sql))
-	}
-	for _, sql := range stmts {
-		if _, err := conn.Exec(ctx, sql); err != nil {
-			t.Fatalf("test schema setup: %v", err)
-		}
-	}
-	return pool
-}
-
 type env struct {
 	ts    *httptest.Server
+	srv   *api.Server
 	fake  *comfytest.Fake
 	blobs *blob.Dir
 	pool  *pgxpool.Pool
@@ -100,7 +40,7 @@ type env struct {
 
 func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	t.Helper()
-	pool := testPool(t, schema)
+	pool := pgtest.Pool(t, schema)
 	store := job.NewStore(pool)
 	fake := comfytest.New(t)
 
@@ -137,7 +77,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return &env{ts: ts, fake: fake, blobs: blobs, pool: pool}
+	return &env{ts: ts, srv: srv, fake: fake, blobs: blobs, pool: pool}
 }
 
 func (e *env) generate(t *testing.T, body string) string {
@@ -375,6 +315,86 @@ func TestTagsAutocomplete(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("bad subset = %d, want 400", resp.StatusCode)
+	}
+}
+
+type fixedDecomposer struct{ concepts []string }
+
+func (f fixedDecomposer) Decompose(context.Context, string) ([]string, error) {
+	return f.concepts, nil
+}
+
+func TestTranslateEndpoint(t *testing.T) {
+	e := newEnv(t, "e2e_translate", compliance.Stub{})
+	ctx := context.Background()
+	if _, err := e.pool.Exec(ctx, `
+		INSERT INTO tags (name, category, post_count, pose_relevant) VALUES
+		('silver_hair', 'general', 500000, false),
+		('sitting',     'general', 2000000, true)`); err != nil {
+		t.Fatal(err)
+	}
+	e.srv.Translator = &nltag.Translator{
+		Decomposer: fixedDecomposer{concepts: []string{"silver hair", "sitting", "ethereal vibes"}},
+		Grounder:   &nltag.Grounder{Store: tags.NewStore(e.pool)},
+	}
+
+	post := func(t *testing.T, body string) (*http.Response, []byte) {
+		t.Helper()
+		resp, err := http.Post(e.ts.URL+"/translate", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp, raw
+	}
+
+	resp, raw := post(t, `{"text": "a girl with silver hair sitting"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /translate = %d: %s", resp.StatusCode, raw)
+	}
+	var result nltag.Result
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tags) != 2 || result.Tags[0].Canonical != "sitting" || result.Tags[1].Canonical != "silver_hair" {
+		t.Errorf("tags = %+v, want sitting then silver_hair (count order)", result.Tags)
+	}
+	if len(result.Dropped) != 1 || result.Dropped[0] != "ethereal vibes" {
+		t.Errorf("dropped = %v", result.Dropped)
+	}
+
+	// pose subset grounds against the closed vocabulary
+	resp, raw = post(t, `{"text": "sitting girl", "subset": "pose"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("pose translate = %d: %s", resp.StatusCode, raw)
+	}
+	result = nltag.Result{}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tags) != 1 || result.Tags[0].Canonical != "sitting" {
+		t.Errorf("pose tags = %+v", result.Tags)
+	}
+
+	if resp, _ := post(t, `{"text": ""}`); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("empty text = %d, want 400", resp.StatusCode)
+	}
+	if resp, _ := post(t, `{"text": "x", "subset": "nope"}`); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad subset = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestTranslateUnavailable(t *testing.T) {
+	e := newEnv(t, "e2e_translate_off", compliance.Stub{}) // no Translator wired
+	resp, err := http.Post(e.ts.URL+"/translate", "application/json",
+		strings.NewReader(`{"text": "a girl"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("translate without LLM = %d, want 503", resp.StatusCode)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"pulsar/core/internal/blob"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/nltag"
 	"pulsar/core/internal/tags"
 	"pulsar/core/internal/workflow"
 )
@@ -31,8 +32,10 @@ type Server struct {
 	Checker compliance.Checker
 	Blobs   blob.Store
 	Tags    *tags.Store
-	Tpl     workflow.Graph // txt2img base, hash-verified at load
-	Cfg     Config
+	// Translator is nil when no LLM is configured; POST /translate then 503s.
+	Translator *nltag.Translator
+	Tpl        workflow.Graph // txt2img base, hash-verified at load
+	Cfg        Config
 }
 
 func (s *Server) Handler() http.Handler {
@@ -42,6 +45,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /jobs/{id}/stream", s.handleStream)
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
 	mux.HandleFunc("GET /tags", s.handleTags)
+	mux.HandleFunc("POST /translate", s.handleTranslate)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	return mux

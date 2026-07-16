@@ -88,25 +88,103 @@ func (s *Store) Autocomplete(ctx context.Context, q string, poseOnly bool, limit
 	return out, rows.Err()
 }
 
+// Resolution is a grounded canonical tag plus the cascade stage that matched.
+type Resolution struct {
+	Canonical string
+	Category  string
+	Count     int
+	Stage     string // "exact" or "alias"
+}
+
 // Resolve snaps a concept to a canonical tag via the exact and alias stages
-// of the grounding cascade (fuzzy and embedding stages arrive with nltag).
-// ok=false means the model has no tag for it: callers DROP the concept —
+// of the grounding cascade (the fuzzy stage lives in nltag; embedding comes
+// later). nil means the model has no tag for it: callers DROP the concept —
 // that is correct behaviour, never force-match (docs/tagdb.md).
-func (s *Store) Resolve(ctx context.Context, concept string) (canonical string, ok bool, err error) {
+//
+// A miss retries with separators squeezed out: "1 girl" normalizes to
+// "1_girl", but the canonical tag is "1girl" — a pattern (1girl, 2girls, …)
+// trigram ranking is bad at, so it belongs to the exact stage.
+func (s *Store) Resolve(ctx context.Context, concept string, poseOnly bool) (*Resolution, error) {
 	name := Normalize(concept)
 	if name == "" {
-		return "", false, nil
+		return nil, nil
 	}
-	err = s.pool.QueryRow(ctx, `
-		SELECT name FROM tags WHERE name = $1
+	r, err := s.resolveName(ctx, name, poseOnly)
+	if err != nil || r != nil {
+		return r, err
+	}
+	if squeezed := strings.ReplaceAll(name, "_", ""); squeezed != name {
+		return s.resolveName(ctx, squeezed, poseOnly)
+	}
+	return nil, nil
+}
+
+func (s *Store) resolveName(ctx context.Context, name string, poseOnly bool) (*Resolution, error) {
+	r := &Resolution{}
+	err := s.pool.QueryRow(ctx, `
+		SELECT name, category, post_count, 'exact' AS stage FROM tags
+		WHERE name = $1 AND (NOT $2 OR pose_relevant)
 		UNION ALL
-		SELECT canonical FROM tag_aliases WHERE alias = $1
-		LIMIT 1`, name).Scan(&canonical)
+		SELECT t.name, t.category, t.post_count, 'alias' FROM tag_aliases a
+		JOIN tags t ON t.name = a.canonical
+		WHERE a.alias = $1 AND (NOT $2 OR t.pose_relevant)
+		ORDER BY stage DESC
+		LIMIT 1`, name, poseOnly).Scan(&r.Canonical, &r.Category, &r.Count, &r.Stage)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return "", false, err
+		return nil, err
 	}
-	return canonical, true, nil
+	return r, nil
+}
+
+// Candidate is a trigram-similar tag (or alias, resolved to its canonical)
+// for the fuzzy stage of the grounding cascade.
+type Candidate struct {
+	Canonical  string
+	Matched    string // the tag or alias name the similarity was computed on
+	Category   string
+	Count      int
+	Similarity float64
+}
+
+// FuzzyCandidates returns pg_trgm-similar candidates for a concept. It only
+// prunes the search space — the accept/drop decision belongs to the caller
+// (nltag applies its ratio threshold, per docs/tagdb.md#grounding-cascade).
+func (s *Store) FuzzyCandidates(ctx context.Context, concept string, poseOnly bool, limit int) ([]Candidate, error) {
+	name := Normalize(concept)
+	if name == "" {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH cands AS (
+			SELECT name AS canonical, name AS matched, category, post_count,
+			       similarity(name, $1) AS sim, pose_relevant
+			FROM tags WHERE name % $1
+			UNION ALL
+			SELECT t.name, a.alias, t.category, t.post_count,
+			       similarity(a.alias, $1), t.pose_relevant
+			FROM tag_aliases a JOIN tags t ON t.name = a.canonical
+			WHERE a.alias % $1
+		)
+		SELECT canonical, matched, category, post_count, sim
+		FROM cands
+		WHERE NOT $2 OR pose_relevant
+		ORDER BY sim DESC, post_count DESC
+		LIMIT $3`, name, poseOnly, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Candidate
+	for rows.Next() {
+		var c Candidate
+		if err := rows.Scan(&c.Canonical, &c.Matched, &c.Category, &c.Count, &c.Similarity); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }

@@ -2,14 +2,11 @@ package tags
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"pulsar/core/internal/pgtest"
 )
 
 func TestNormalize(t *testing.T) {
@@ -33,71 +30,14 @@ func TestEscapeLike(t *testing.T) {
 	}
 }
 
-func testPool(t *testing.T, schema string) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("PULSAR_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("PULSAR_TEST_DATABASE_URL not set")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// public stays on the path so pg_trgm's operator classes resolve
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-
-	files, err := filepath.Glob("../../../db/migrations/*.sql")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no migrations found: %v", err)
-	}
-	sort.Strings(files)
-
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Release()
-	// serialize schema setup across parallel test packages — CREATE
-	// EXTENSION IF NOT EXISTS races with itself; the lock is session-scoped
-	// so setup must run on this one connection
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(727272)"); err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Exec(ctx, "SELECT pg_advisory_unlock(727272)")
-
-	stmts := []string{
-		fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema),
-		fmt.Sprintf("CREATE SCHEMA %s", schema),
-	}
-	for _, f := range files {
-		sql, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		stmts = append(stmts, string(sql))
-	}
-	for _, sql := range stmts {
-		if _, err := conn.Exec(ctx, sql); err != nil {
-			t.Fatalf("test schema setup: %v", err)
-		}
-	}
-	return pool
-}
-
 func seed(t *testing.T, pool *pgxpool.Pool) *Store {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO tags (name, category, post_count, pose_relevant) VALUES
+		('1girl',        'general', 8000000, false),
 		('long_hair',    'general', 6000000, false),
+		('blonde_hair',  'general', 2500000, false),
 		('silver_hair',  'general',  500000, false),
 		('silver_dress', 'general',    3000, false),
 		('sitting',      'general', 2000000, true),
@@ -125,7 +65,7 @@ func names(s []Suggestion) []string {
 }
 
 func TestAutocomplete(t *testing.T) {
-	s := seed(t, testPool(t, "tags_ac"))
+	s := seed(t, pgtest.Pool(t, "tags_ac"))
 	ctx := context.Background()
 
 	cases := []struct {
@@ -135,7 +75,7 @@ func TestAutocomplete(t *testing.T) {
 		want     []string
 	}{
 		{"prefix rank by count", "silver", false, []string{"silver_hair", "silver_dress"}},
-		{"contains rank by count", "hair", false, []string{"long_hair", "silver_hair"}},
+		{"contains rank by count", "hair", false, []string{"long_hair", "blonde_hair", "silver_hair"}},
 		{"alias resolves to canonical", "platinum", false, []string{"silver_hair"}},
 		{"alias and canonical dedupe", "miku", false, []string{"hatsune_miku"}},
 		{"space input normalized", "on back", false, []string{"on_back"}},
@@ -172,7 +112,7 @@ func TestAutocomplete(t *testing.T) {
 }
 
 func TestAutocompleteLimit(t *testing.T) {
-	s := seed(t, testPool(t, "tags_limit"))
+	s := seed(t, pgtest.Pool(t, "tags_limit"))
 	got, err := s.Autocomplete(context.Background(), "s", false, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -183,29 +123,89 @@ func TestAutocompleteLimit(t *testing.T) {
 }
 
 func TestResolve(t *testing.T) {
-	s := seed(t, testPool(t, "tags_resolve"))
+	s := seed(t, pgtest.Pool(t, "tags_resolve"))
 	ctx := context.Background()
 
-	for in, want := range map[string]string{
-		"silver_hair":   "silver_hair",  // exact
-		"Silver Hair":   "silver_hair",  // normalized
-		"platinum_hair": "silver_hair",  // alias
-		"miku":          "hatsune_miku", // alias
-	} {
-		got, ok, err := s.Resolve(ctx, in)
+	cases := map[string]struct{ canonical, stage string }{
+		"silver_hair":   {"silver_hair", "exact"},
+		"Silver Hair":   {"silver_hair", "exact"}, // normalized
+		"platinum_hair": {"silver_hair", "alias"},
+		"miku":          {"hatsune_miku", "alias"},
+		"1 girl":        {"1girl", "exact"}, // squeezed-form fallback
+	}
+	for in, want := range cases {
+		got, err := s.Resolve(ctx, in, false)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !ok || got != want {
-			t.Errorf("Resolve(%q) = %q ok=%v, want %q", in, got, ok, want)
+		if got == nil || got.Canonical != want.canonical || got.Stage != want.stage {
+			t.Errorf("Resolve(%q) = %+v, want %s via %s", in, got, want.canonical, want.stage)
 		}
 	}
 
-	// no tag for it → dropped, never force-matched
-	if _, ok, err := s.Resolve(ctx, "ethereal vibes"); err != nil || ok {
-		t.Errorf("Resolve miss: ok=%v err=%v, want ok=false", ok, err)
+	got, err := s.Resolve(ctx, "miku", false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok, err := s.Resolve(ctx, "   "); err != nil || ok {
-		t.Errorf("Resolve empty: ok=%v err=%v, want ok=false", ok, err)
+	if got.Category != "character" || got.Count != 900000 {
+		t.Errorf("resolution payload: %+v", got)
+	}
+
+	// the pose subset restricts the whole cascade
+	if got, err := s.Resolve(ctx, "silver_hair", true); err != nil || got != nil {
+		t.Errorf("poseOnly Resolve(silver_hair) = %+v (%v), want nil", got, err)
+	}
+	if got, err := s.Resolve(ctx, "sitting", true); err != nil || got == nil {
+		t.Errorf("poseOnly Resolve(sitting) = %+v (%v), want hit", got, err)
+	}
+
+	// no tag for it → dropped, never force-matched
+	if got, err := s.Resolve(ctx, "ethereal vibes", false); err != nil || got != nil {
+		t.Errorf("Resolve miss = %+v (%v), want nil", got, err)
+	}
+	if got, err := s.Resolve(ctx, "   ", false); err != nil || got != nil {
+		t.Errorf("Resolve empty = %+v (%v), want nil", got, err)
+	}
+}
+
+func TestFuzzyCandidates(t *testing.T) {
+	s := seed(t, pgtest.Pool(t, "tags_fuzzy"))
+	ctx := context.Background()
+
+	cands, err := s.FuzzyCandidates(ctx, "blode hair", false, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) == 0 || cands[0].Canonical != "blonde_hair" {
+		t.Fatalf("candidates for 'blode hair' = %+v", cands)
+	}
+	if cands[0].Similarity <= 0 || cands[0].Count != 2500000 {
+		t.Errorf("candidate payload: %+v", cands[0])
+	}
+
+	// a similar alias surfaces its canonical tag
+	cands, err = s.FuzzyCandidates(ctx, "platnum hair", false, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range cands {
+		if c.Canonical == "silver_hair" && c.Matched == "platinum_hair" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("alias candidate missing: %+v", cands)
+	}
+
+	// pose subset filters candidates too
+	cands, err = s.FuzzyCandidates(ctx, "blode hair", true, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cands {
+		if c.Canonical == "blonde_hair" {
+			t.Errorf("poseOnly returned non-pose candidate: %+v", c)
+		}
 	}
 }

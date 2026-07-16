@@ -8,6 +8,8 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+
+	"pulsar/core/internal/pgtest"
 )
 
 // newFakeDanbooru serves the two endpoints Ingest uses. Page 1 has data,
@@ -57,7 +59,7 @@ func newFakeDanbooru(t *testing.T) (*httptest.Server, *atomic.Int32, *atomic.Int
 }
 
 func TestIngest(t *testing.T) {
-	pool := testPool(t, "tags_ingest")
+	pool := pgtest.Pool(t, "tags_ingest")
 	srv, tagCalls, aliasCalls := newFakeDanbooru(t)
 	ctx := context.Background()
 
@@ -108,10 +110,10 @@ func TestIngest(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT category FROM tags WHERE name = 'highres'`).Scan(&category); err != nil || category != "meta" {
 		t.Errorf("highres category = %q (%v), want meta", category, err)
 	}
-	if got, ok, _ := s.Resolve(ctx, "miku"); !ok || got != "hatsune_miku" {
-		t.Errorf("alias not resolvable after ingest: %q ok=%v", got, ok)
+	if got, _ := s.Resolve(ctx, "miku", false); got == nil || got.Canonical != "hatsune_miku" {
+		t.Errorf("alias not resolvable after ingest: %+v", got)
 	}
-	if _, ok, _ := s.Resolve(ctx, "dangling"); ok {
+	if got, _ := s.Resolve(ctx, "dangling", false); got != nil {
 		t.Error("alias with missing canonical must not be ingested")
 	}
 	var pose bool
