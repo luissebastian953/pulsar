@@ -1,0 +1,5 @@
+# eval harness (docs/tuning.md): fixed prompts x seeds, sweep CFG x sampler x steps,
+# render contact sheets. Build before the NoobAI swap.
+httpx
+pillow
+pyyaml

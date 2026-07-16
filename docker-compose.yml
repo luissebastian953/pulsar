@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pulsar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pulsar}
+      POSTGRES_DB: ${POSTGRES_DB:-pulsar}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulsar} -d ${POSTGRES_DB:-pulsar}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One process per GPU; core routes to the shallowest queue (docs/architecture.md).
+  # Host port is localhost-only and for debugging — core is the only client.
+  comfy:
+    profiles: [gpu]
+    build: ./comfy   # Dockerfile + pinned custom nodes land with phase 1 GPU work
+    ports:
+      - "127.0.0.1:8188:8188"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # core and orbit run natively during dev (make run-core / run-orbit).
+  # The `full` profile is for containerized full-stack runs once Dockerfiles exist.
+  core:
+    profiles: [full]
+    build: ./core
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-pulsar}:${POSTGRES_PASSWORD:-pulsar}@postgres:5432/${POSTGRES_DB:-pulsar}?sslmode=disable
+      COMFY_URL: ${COMFY_URL:-http://comfy:8188}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  orbit:
+    profiles: [full]
+    build: ./orbit
+    environment:
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-http://localhost:8080}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - core
+
+volumes:
+  pgdata:

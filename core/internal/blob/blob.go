@@ -1,0 +1,52 @@
+// Package blob stores generated images. Dir is the local implementation;
+// an S3-compatible store slots in behind the same interface later.
+package blob
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+type Store interface {
+	Put(id string, data []byte) error
+	Open(id string) (io.ReadCloser, error)
+}
+
+type Dir struct {
+	Root string
+}
+
+func NewDir(root string) (*Dir, error) {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return nil, err
+	}
+	return &Dir{Root: root}, nil
+}
+
+// ids are server-generated UUIDs; reject anything else so a crafted id can
+// never traverse out of Root.
+func (d *Dir) path(id string) (string, error) {
+	if id == "" || strings.ContainsAny(id, "/\\.") {
+		return "", fmt.Errorf("invalid blob id %q", id)
+	}
+	return filepath.Join(d.Root, id+".png"), nil
+}
+
+func (d *Dir) Put(id string, data []byte) error {
+	p, err := d.path(id)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0o644)
+}
+
+func (d *Dir) Open(id string) (io.ReadCloser, error) {
+	p, err := d.path(id)
+	if err != nil {
+		return nil, err
+	}
+	return os.Open(p)
+}

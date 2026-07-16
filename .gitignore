@@ -1,0 +1,31 @@
+# OS
+.DS_Store
+
+# secrets / local env
+.env
+.env.*
+!.env.example
+
+# transfer artifact (original doc bundle backup)
+pulsar_skill.zip
+
+# Go (core)
+core/bin/
+*.test
+*.out
+
+# Node / Nuxt (orbit)
+node_modules/
+orbit/.nuxt/
+orbit/.output/
+orbit/dist/
+
+# Python (eval)
+__pycache__/
+*.py[cod]
+.venv/
+eval/out/
+
+# model weights & generated images — never in git
+comfy/models/
+data/
