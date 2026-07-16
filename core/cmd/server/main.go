@@ -17,6 +17,7 @@ import (
 	"pulsar/core/internal/comfy"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/tags"
 	"pulsar/core/internal/worker"
 	"pulsar/core/internal/workflow"
 )
@@ -82,6 +83,7 @@ func main() {
 	}
 
 	store := job.NewStore(pool)
+	tagStore := tags.NewStore(pool)
 	broker := job.NewBroker()
 	checker := compliance.Stub{} // phase 4 replaces the impl; the call sites stay
 
@@ -98,7 +100,8 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tpl: tpl, Cfg: api.Config{Lineage: lineage, Checkpoint: checkpoint},
+			Tags: tagStore, Tpl: tpl,
+			Cfg: api.Config{Lineage: lineage, Checkpoint: checkpoint},
 		}).Handler(),
 	}
 	go func() {

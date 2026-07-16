@@ -16,6 +16,7 @@ import (
 	"pulsar/core/internal/blob"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/tags"
 	"pulsar/core/internal/workflow"
 )
 
@@ -29,6 +30,7 @@ type Server struct {
 	Broker  *job.Broker
 	Checker compliance.Checker
 	Blobs   blob.Store
+	Tags    *tags.Store
 	Tpl     workflow.Graph // txt2img base, hash-verified at load
 	Cfg     Config
 }
@@ -39,6 +41,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /jobs/{id}", s.handleJob)
 	mux.HandleFunc("GET /jobs/{id}/stream", s.handleStream)
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
+	mux.HandleFunc("GET /tags", s.handleTags)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	return mux
@@ -176,6 +179,30 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	io.Copy(w, rc)
+}
+
+// GET /tags?q=&subset= — autocomplete over the tag DB; subset=pose grounds
+// against the closed pose vocabulary (docs/tagdb.md#ui-contract).
+func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
+	var poseOnly bool
+	switch r.URL.Query().Get("subset") {
+	case "", "all":
+	case "pose":
+		poseOnly = true
+	default:
+		httpError(w, http.StatusBadRequest, "subset must be all or pose")
+		return
+	}
+	suggestions, err := s.Tags.Autocomplete(r.Context(), r.URL.Query().Get("q"), poseOnly, 20)
+	if err != nil {
+		log.Printf("api: tags: %v", err)
+		httpError(w, http.StatusInternalServerError, "autocomplete failed")
+		return
+	}
+	if suggestions == nil {
+		suggestions = []tags.Suggestion{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tags": suggestions})
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {

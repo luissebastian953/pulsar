@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -25,57 +27,81 @@ import (
 	"pulsar/core/internal/comfy/comfytest"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/tags"
 	"pulsar/core/internal/worker"
 	"pulsar/core/internal/workflow"
 )
 
-func testStore(t *testing.T, schema string) *job.Store {
+func testPool(t *testing.T, schema string) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("PULSAR_TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("PULSAR_TEST_DATABASE_URL not set")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	// public stays on the path so pg_trgm's operator classes resolve
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
 
-	for _, sql := range []string{
-		fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema),
-		fmt.Sprintf("CREATE SCHEMA %s", schema),
-	} {
-		if _, err := pool.Exec(ctx, sql); err != nil {
-			t.Fatal(err)
-		}
+	files, err := filepath.Glob("../../../db/migrations/*.sql")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no migrations found: %v", err)
 	}
-	migration, err := os.ReadFile("../../../db/migrations/0001_jobs.sql")
+	sort.Strings(files)
+
+	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, string(migration)); err != nil {
+	defer conn.Release()
+	// serialize schema setup across parallel test packages — CREATE
+	// EXTENSION IF NOT EXISTS races with itself; the lock is session-scoped
+	// so setup must run on this one connection
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(727272)"); err != nil {
 		t.Fatal(err)
 	}
-	return job.NewStore(pool)
+	defer conn.Exec(ctx, "SELECT pg_advisory_unlock(727272)")
+
+	stmts := []string{
+		fmt.Sprintf("DROP SCHEMA IF EXISTS %s CASCADE", schema),
+		fmt.Sprintf("CREATE SCHEMA %s", schema),
+	}
+	for _, f := range files {
+		sql, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stmts = append(stmts, string(sql))
+	}
+	for _, sql := range stmts {
+		if _, err := conn.Exec(ctx, sql); err != nil {
+			t.Fatalf("test schema setup: %v", err)
+		}
+	}
+	return pool
 }
 
 type env struct {
 	ts    *httptest.Server
 	fake  *comfytest.Fake
 	blobs *blob.Dir
+	pool  *pgxpool.Pool
 }
 
 func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	t.Helper()
-	store := testStore(t, schema)
+	pool := testPool(t, schema)
+	store := job.NewStore(pool)
 	fake := comfytest.New(t)
 
 	client, err := comfy.New(fake.URL())
@@ -106,11 +132,12 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tpl: tpl, Cfg: api.Config{Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors"},
+		Tags: tags.NewStore(pool), Tpl: tpl,
+		Cfg: api.Config{Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors"},
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return &env{ts: ts, fake: fake, blobs: blobs}
+	return &env{ts: ts, fake: fake, blobs: blobs, pool: pool}
 }
 
 func (e *env) generate(t *testing.T, body string) string {
@@ -286,6 +313,68 @@ func TestEndToEndFailed(t *testing.T) {
 	}
 	if !strings.Contains(v.Error, "fake execution failure") {
 		t.Errorf("error = %q", v.Error)
+	}
+}
+
+func TestTagsAutocomplete(t *testing.T) {
+	e := newEnv(t, "e2e_tags", compliance.Stub{})
+	ctx := context.Background()
+	if _, err := e.pool.Exec(ctx, `
+		INSERT INTO tags (name, category, post_count, pose_relevant) VALUES
+		('silver_hair',  'general', 500000, false),
+		('silver_dress', 'general',   3000, false),
+		('sitting',      'general', 2000000, true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(ctx,
+		`INSERT INTO tag_aliases (alias, canonical) VALUES ('platinum_hair', 'silver_hair')`); err != nil {
+		t.Fatal(err)
+	}
+
+	type response struct {
+		Tags []struct {
+			Canonical string `json:"canonical"`
+			Category  string `json:"category"`
+			Count     int    `json:"count"`
+		} `json:"tags"`
+	}
+	query := func(t *testing.T, params string) response {
+		t.Helper()
+		resp, err := http.Get(e.ts.URL + "/tags?" + params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /tags?%s = %d", params, resp.StatusCode)
+		}
+		var out response
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	got := query(t, "q=silver")
+	if len(got.Tags) != 2 || got.Tags[0].Canonical != "silver_hair" || got.Tags[0].Count != 500000 {
+		t.Errorf("q=silver: %+v", got.Tags)
+	}
+	if got := query(t, "q=platinum"); len(got.Tags) != 1 || got.Tags[0].Canonical != "silver_hair" {
+		t.Errorf("alias hit must resolve to canonical: %+v", got.Tags)
+	}
+	if got := query(t, "q=si&subset=pose"); len(got.Tags) != 1 || got.Tags[0].Canonical != "sitting" {
+		t.Errorf("pose subset: %+v", got.Tags)
+	}
+	if got := query(t, "q="); got.Tags == nil || len(got.Tags) != 0 {
+		t.Errorf("empty q must return empty list, got %+v", got.Tags)
+	}
+	resp, err := http.Get(e.ts.URL + "/tags?q=x&subset=nope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad subset = %d, want 400", resp.StatusCode)
 	}
 }
 

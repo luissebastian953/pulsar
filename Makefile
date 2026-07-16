@@ -17,8 +17,8 @@ down: ## stop everything, all profiles
 migrate: ## apply db/migrations/*.sql in order (forward-only, numbered)
 	./db/migrate.sh
 
-seed-tags: ## Danbooru dump -> tags table (slow, run once)
-	@echo "seed-tags: not implemented yet (phase 1 — see docs/tagdb.md#ingest)"; exit 1
+seed-tags: ## Danbooru -> tag DB (slow, idempotent; MIN_POST_COUNT=50 to tune floor)
+	cd core && go run ./cmd/seed-tags
 
 eval: ## tuning harness: prompt/seed sweeps -> contact sheets
 	@echo "eval: not implemented yet (build before the NoobAI swap — see docs/tuning.md)"; exit 1
