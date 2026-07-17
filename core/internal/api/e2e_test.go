@@ -7,7 +7,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -65,6 +68,10 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	i2iTpl, err := workflow.Load("../../../workflows", workflow.TplImg2Img, workflow.Img2ImgSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	broker := job.NewBroker()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -77,7 +84,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl,
+		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl,
 		Cfg: api.Config{
 			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
 			QualityTags:    "masterpiece, best quality",
@@ -255,6 +262,92 @@ func TestEndToEndPose(t *testing.T) {
 	}
 	if got := g[workflow.Pose.Lineart].Inputs["resolution"]; got != float64(832) {
 		t.Errorf("lineart resolution = %v, want 832", got)
+	}
+}
+
+// TestEndToEndImg2Img: multipart upload → normalize → CheckUpload → blob,
+// then a generation whose input is forwarded to the executing process and
+// whose graph loads it by name.
+func TestEndToEndImg2Img(t *testing.T) {
+	e := newEnv(t, "e2e_i2i", compliance.Stub{})
+
+	// a 100x150 png — should normalize to the 832x1216 bucket
+	src := image.NewRGBA(image.Rect(0, 0, 100, 150))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	var form bytes.Buffer
+	mw := multipart.NewWriter(&form)
+	fw, _ := mw.CreateFormFile("image", "in.png")
+	fw.Write(buf.Bytes())
+	mw.Close()
+	resp, err := http.Post(e.ts.URL+"/uploads", mw.FormDataContentType(), &form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var up struct {
+		ImageID string `json:"image_id"`
+		Width   int    `json:"width"`
+		Height  int    `json:"height"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&up); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated || up.ImageID == "" {
+		t.Fatalf("upload = %d %+v", resp.StatusCode, up)
+	}
+	if up.Width != 832 || up.Height != 1216 {
+		t.Errorf("normalized to %dx%d, want 832x1216", up.Width, up.Height)
+	}
+
+	id := e.generate(t, `{"prompt": "1girl, red dress", "seed": 5, "kind": "img2img", "image_id": "`+up.ImageID+`"}`)
+	v := e.waitTerminal(t, id)
+	if v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+
+	// the normalized input reached the executing process under its blob name
+	fwd, ok := e.fake.Upload(up.ImageID + ".png")
+	if !ok {
+		t.Fatal("input was not forwarded to comfy")
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(fwd))
+	if err != nil || cfg.Width != 832 || cfg.Height != 1216 {
+		t.Errorf("forwarded image %dx%d, %v", cfg.Width, cfg.Height, err)
+	}
+
+	// the graph loads that name and carries the default denoise
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g[workflow.Img2Img.LoadImage].Inputs["image"]; got != up.ImageID+".png" {
+		t.Errorf("LoadImage = %v", got)
+	}
+	if got := g[workflow.Img2Img.Sampler].Inputs["denoise"]; got != 0.6 {
+		t.Errorf("denoise = %v, want 0.6", got)
+	}
+
+	// stored params carry the resolved denoise (reproducibility)
+	var spec assembly.Spec
+	json.Unmarshal(v.Params, &spec)
+	if spec.Denoise != 0.6 {
+		t.Errorf("stored denoise = %v", spec.Denoise)
+	}
+}
+
+func TestGenerateImg2ImgRequiresUpload(t *testing.T) {
+	e := newEnv(t, "e2e_i2i_noupload", compliance.Stub{})
+	resp, err := http.Post(e.ts.URL+"/generate", "application/json",
+		strings.NewReader(`{"prompt": "1girl", "kind": "img2img"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("missing image_id = %d, want 400", resp.StatusCode)
 	}
 }
 

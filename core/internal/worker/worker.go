@@ -4,10 +4,12 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"time"
 
 	"pulsar/core/internal/blob"
+	"pulsar/core/internal/comfy"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/job"
 	"pulsar/core/internal/workflow"
@@ -15,7 +17,7 @@ import (
 
 // Executor is satisfied by comfy.Router; outputs keyed by SaveImage node ID.
 type Executor interface {
-	ExecuteAll(ctx context.Context, graph json.RawMessage, onProgress func(step, total int)) (map[string][]byte, error)
+	ExecuteAll(ctx context.Context, graph json.RawMessage, input *comfy.Input, onProgress func(step, total int)) (map[string][]byte, error)
 }
 
 type Worker struct {
@@ -71,7 +73,25 @@ func (w *Worker) process(ctx context.Context, j *job.Job) {
 		return
 	}
 
-	outs, err := w.Exec.ExecuteAll(execCtx, j.Workflow, func(step, total int) {
+	var input *comfy.Input
+	if j.InputPath != "" {
+		rc, err := w.Blobs.Open(j.InputPath)
+		if err == nil {
+			data, rerr := io.ReadAll(rc)
+			rc.Close()
+			if rerr == nil {
+				input = &comfy.Input{Name: j.InputPath + ".png", Data: data}
+			}
+		}
+		if input == nil {
+			w.finish(ctx, j.ID, job.EventFailed, func() error {
+				return w.Store.MarkFailed(ctx, j.ID, "input image unavailable")
+			})
+			return
+		}
+	}
+
+	outs, err := w.Exec.ExecuteAll(execCtx, j.Workflow, input, func(step, total int) {
 		w.Broker.Publish(j.ID, job.Event{Type: job.EventProgress, Step: step, Total: total})
 	})
 	if err != nil {

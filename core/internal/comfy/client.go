@@ -3,12 +3,14 @@
 package comfy
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -77,6 +79,41 @@ type wsMsg struct {
 		PromptID         string  `json:"prompt_id"`
 		ExceptionMessage string  `json:"exception_message"`
 	} `json:"data"`
+}
+
+// Input is an image forwarded to the executing process before submit —
+// upload and job must land on the same ComfyUI (.claude/skills/core-job).
+type Input struct {
+	Name string
+	Data []byte
+}
+
+// UploadImage writes an input image into the process's input/ dir.
+func (c *Client) UploadImage(ctx context.Context, name string, data []byte) error {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("image", name)
+	if err != nil {
+		return err
+	}
+	fw.Write(data)
+	mw.WriteField("overwrite", "true")
+	mw.Close()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/upload/image", &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("comfy upload: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return fmt.Errorf("comfy upload: %s: %.200s", resp.Status, raw)
+	}
+	return nil
 }
 
 // Execute is ExecuteAll for the one-SaveImage case.

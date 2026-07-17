@@ -39,6 +39,7 @@ func (s State) Terminal() bool {
 type Job struct {
 	ID         string
 	Kind       string
+	InputPath  string // blob id of the uploaded input (image-input kinds)
 	State      State
 	Params     json.RawMessage
 	Workflow   json.RawMessage

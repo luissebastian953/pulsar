@@ -11,17 +11,19 @@ import (
 // Request is the raw API input. Prompt and Negative are comma-separated
 // Danbooru tags for now; nltag translation slots in front of this later.
 type Request struct {
-	Prompt      string  `json:"prompt"`
-	Negative    string  `json:"negative,omitempty"`
-	Width       int     `json:"width,omitempty"`
-	Height      int     `json:"height,omitempty"`
-	Steps       int     `json:"steps,omitempty"`
-	CFG         float64 `json:"cfg,omitempty"`
-	Sampler     string  `json:"sampler,omitempty"`
-	Scheduler   string  `json:"scheduler,omitempty"`
-	Seed        *int64  `json:"seed,omitempty"`
-	QualityTags *bool   `json:"quality_tags,omitempty"`
-	UCPreset    *bool   `json:"uc_preset,omitempty"`
+	Prompt    string  `json:"prompt"`
+	Negative  string  `json:"negative,omitempty"`
+	Width     int     `json:"width,omitempty"`
+	Height    int     `json:"height,omitempty"`
+	Steps     int     `json:"steps,omitempty"`
+	CFG       float64 `json:"cfg,omitempty"`
+	Sampler   string  `json:"sampler,omitempty"`
+	Scheduler string  `json:"scheduler,omitempty"`
+	Seed      *int64  `json:"seed,omitempty"`
+	// Denoise applies to image-input kinds; 1.0 ignores the input
+	Denoise     *float64 `json:"denoise,omitempty"`
+	QualityTags *bool    `json:"quality_tags,omitempty"`
+	UCPreset    *bool    `json:"uc_preset,omitempty"`
 }
 
 // Spec is the resolved parameter set, stored verbatim on the job row.
@@ -36,6 +38,7 @@ type Spec struct {
 	Sampler   string  `json:"sampler"`
 	Scheduler string  `json:"scheduler"`
 	Seed      int64   `json:"seed"`
+	Denoise   float64 `json:"denoise,omitempty"`
 	BatchSize int     `json:"batch_size"`
 	Lineage   string  `json:"lineage"`
 }
@@ -152,6 +155,12 @@ func Build(req Request, opts Options) (Spec, error) {
 	}
 	if !schedulers[s.Scheduler] {
 		return Spec{}, fmt.Errorf("unknown scheduler %q", s.Scheduler)
+	}
+	if req.Denoise != nil {
+		if *req.Denoise < 0.05 || *req.Denoise > 0.95 {
+			return Spec{}, fmt.Errorf("denoise must be 0.05..0.95")
+		}
+		s.Denoise = *req.Denoise
 	}
 
 	if quality := strings.TrimSpace(opts.QualityTags); quality != "" && (req.QualityTags == nil || *req.QualityTags) {

@@ -105,6 +105,28 @@ func BuildTxt2Img(tpl Graph, spec assembly.Spec, checkpoint string) (json.RawMes
 	return apply(tpl, spinePatches(spec, checkpoint))
 }
 
+// BuildImg2Img: prompt/sampler patches + the uploaded input's server-side
+// filename and denoise (composition survives below ~0.6).
+func BuildImg2Img(tpl Graph, spec assembly.Spec, checkpoint, inputName string) (json.RawMessage, error) {
+	n := Img2Img
+	denoise := spec.Denoise
+	if denoise == 0 {
+		denoise = 0.6
+	}
+	return apply(tpl, []patch{
+		{n.Checkpoint, "ckpt_name", checkpoint},
+		{n.Positive, "text", spec.Prompt},
+		{n.Negative, "text", spec.Negative},
+		{n.Sampler, "seed", spec.Seed},
+		{n.Sampler, "steps", spec.Steps},
+		{n.Sampler, "cfg", spec.CFG},
+		{n.Sampler, "sampler_name", spec.Sampler},
+		{n.Sampler, "scheduler", spec.Scheduler},
+		{n.Sampler, "denoise", denoise},
+		{n.LoadImage, "image", inputName},
+	})
+}
+
 // BuildPose: spine patches + extractor resolution at the render's short side.
 func BuildPose(tpl Graph, spec assembly.Spec, checkpoint string) (json.RawMessage, error) {
 	res := min(spec.Width, spec.Height)

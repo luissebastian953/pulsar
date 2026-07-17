@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -25,6 +26,7 @@ type Fake struct {
 	lastID string
 
 	submitted chan string
+	uploads   map[string][]byte
 
 	// Steps progress messages are streamed per prompt.
 	Steps int
@@ -39,6 +41,7 @@ type Fake struct {
 func New(t *testing.T) *Fake {
 	f := &Fake{
 		graphs:    make(map[string]json.RawMessage),
+		uploads:   make(map[string][]byte),
 		submitted: make(chan string, 16),
 		Steps:     4,
 		PNG:       tinyPNG(t),
@@ -49,6 +52,7 @@ func New(t *testing.T) *Fake {
 	mux.HandleFunc("GET /history/{id}", f.handleHistory)
 	mux.HandleFunc("GET /view", f.handleView)
 	mux.HandleFunc("GET /queue", f.handleQueue)
+	mux.HandleFunc("POST /upload/image", f.handleUpload)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	return f
@@ -160,6 +164,28 @@ func (f *Fake) handleView(w http.ResponseWriter, r *http.Request) {
 	if f.TagOutputs {
 		w.Write([]byte(r.URL.Query().Get("filename")))
 	}
+}
+
+func (f *Fake) handleUpload(w http.ResponseWriter, r *http.Request) {
+	file, hdr, err := r.FormFile("image")
+	if err != nil {
+		http.Error(w, "image field required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	data, _ := io.ReadAll(file)
+	f.mu.Lock()
+	f.uploads[hdr.Filename] = data
+	f.mu.Unlock()
+	json.NewEncoder(w).Encode(map[string]string{"name": hdr.Filename})
+}
+
+// Upload returns the bytes forwarded under name, if any.
+func (f *Fake) Upload(name string) ([]byte, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.uploads[name]
+	return d, ok
 }
 
 func (f *Fake) handleQueue(w http.ResponseWriter, r *http.Request) {

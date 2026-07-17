@@ -8,6 +8,9 @@ const (
 
 	TplPose    = "pose.json"
 	PoseSHA256 = "sha256:f34d3ba787c5ba399e4be95329adec279d62cc4fe70d8a89e36bfbb263c5c722"
+
+	TplImg2Img    = "img2img.json"
+	Img2ImgSHA256 = "sha256:b8dfd8604a5b21bbc6e126ee1fc7be74444be7c670028b3a0ba5cb11e138ee41"
 )
 
 var Txt2Img = struct {
@@ -59,12 +62,36 @@ var Pose = struct {
 	LineartInvert: "12",
 }
 
+// Img2Img = txt2img spine minus the empty latent: LoadImage → VAEEncode
+// feeds the sampler, denoise < 1 keeps composition (.claude/skills/comfy-workflow).
+var Img2Img = struct {
+	Checkpoint string
+	Positive   string
+	Negative   string
+	Sampler    string
+	Decode     string
+	Save       string
+	LoadImage  string
+	Encode     string
+}{
+	Checkpoint: "1",
+	Positive:   "2",
+	Negative:   "3",
+	Sampler:    "5",
+	Decode:     "6",
+	Save:       "7",
+	LoadImage:  "8",
+	Encode:     "9",
+}
+
 // OutputRoles: kind → role → SaveImage node; role "" is the primary
 // (.claude/skills/core-job).
 func OutputRoles(kind string) (map[string]string, bool) {
 	switch kind {
 	case "txt2img":
 		return map[string]string{"": Txt2Img.Save}, true
+	case "img2img":
+		return map[string]string{"": Img2Img.Save}, true
 	case "pose":
 		return map[string]string{
 			"":         Pose.SaveSource,

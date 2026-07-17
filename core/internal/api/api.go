@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"pulsar/core/internal/assembly"
 	"pulsar/core/internal/blob"
 	"pulsar/core/internal/compliance"
+	"pulsar/core/internal/ingest"
 	"pulsar/core/internal/job"
 	"pulsar/core/internal/nltag"
 	"pulsar/core/internal/tags"
@@ -48,6 +50,7 @@ type Server struct {
 	Translator *nltag.Translator
 	Tpl        workflow.Graph // txt2img base, hash-verified at load
 	PoseTpl    workflow.Graph // pose base (spine + extraction), hash-verified at load
+	Img2ImgTpl workflow.Graph // img2img base (LoadImage → VAEEncode), hash-verified at load
 	Cfg        Config
 }
 
@@ -57,6 +60,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /jobs/{id}", s.handleJob)
 	mux.HandleFunc("GET /jobs/{id}/stream", s.handleStream)
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
+	mux.HandleFunc("POST /uploads", s.handleUpload)
 	mux.HandleFunc("GET /tags", s.handleTags)
 	mux.HandleFunc("GET /tags/lookup", s.handleTagLookup)
 	mux.HandleFunc("POST /translate", s.handleTranslate)
@@ -78,9 +82,10 @@ var imageIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		assembly.Request
-		// Kind selects the workflow: "txt2img" (default) or "pose" —
-		// same spine, pose appends lineart + skeleton extraction.
-		Kind string `json:"kind"`
+		// Kind selects the workflow: "txt2img" (default), "img2img"
+		// (requires image_id from POST /uploads), or "pose".
+		Kind    string `json:"kind"`
+		ImageID string `json:"image_id"`
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
@@ -94,6 +99,22 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := workflow.OutputRoles(req.Kind); !ok {
 		httpError(w, http.StatusBadRequest, "unknown kind "+strconv.Quote(req.Kind))
 		return
+	}
+	if req.Kind == "img2img" {
+		if !imageIDPattern.MatchString(req.ImageID) {
+			httpError(w, http.StatusBadRequest, "img2img requires image_id from POST /uploads")
+			return
+		}
+		if rc, err := s.Blobs.Open(req.ImageID); err != nil {
+			httpError(w, http.StatusBadRequest, "unknown image_id")
+			return
+		} else {
+			rc.Close()
+		}
+		if req.Denoise == nil {
+			d := 0.6 // restructure while keeping composition
+			req.Denoise = &d
+		}
 	}
 
 	seed := int64(0)
@@ -129,9 +150,12 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var graph json.RawMessage
-	if req.Kind == "pose" {
+	switch req.Kind {
+	case "pose":
 		graph, err = workflow.BuildPose(s.PoseTpl, spec, s.Cfg.Checkpoint)
-	} else {
+	case "img2img":
+		graph, err = workflow.BuildImg2Img(s.Img2ImgTpl, spec, s.Cfg.Checkpoint, req.ImageID+".png")
+	default:
 		graph, err = workflow.BuildTxt2Img(s.Tpl, spec, s.Cfg.Checkpoint)
 	}
 	if err != nil {
@@ -145,7 +169,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "params marshal failed")
 		return
 	}
-	j, err := s.Store.Enqueue(r.Context(), req.Kind, params, graph)
+	j, err := s.Store.Enqueue(r.Context(), req.Kind, params, graph, req.ImageID)
 	if err != nil {
 		log.Printf("api: enqueue: %v", err)
 		httpError(w, http.StatusInternalServerError, "enqueue failed")
@@ -218,6 +242,69 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.payload(r, j))
+}
+
+// POST /uploads — the single image-ingest path (img2img, later references
+// and inpaint): normalize → CheckUpload → store (.claude/skills/core-job).
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(ingest.MaxBytes); err != nil {
+		httpError(w, http.StatusBadRequest, "multipart form required")
+		return
+	}
+	f, _, err := r.FormFile("image")
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "image field required")
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, ingest.MaxBytes+1))
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "read failed")
+		return
+	}
+
+	norm, err := ingest.Normalize(data)
+	if err != nil {
+		httpError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
+	// ingest compliance hook — fail closed
+	dec, err := s.Checker.CheckUpload(r.Context(), norm.PNG)
+	if err != nil {
+		httpError(w, http.StatusServiceUnavailable, "compliance check unavailable")
+		return
+	}
+	if !dec.Allowed {
+		httpError(w, http.StatusUnprocessableEntity, "upload rejected: "+dec.Reason)
+		return
+	}
+
+	id, err := newUploadID()
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "id generation failed")
+		return
+	}
+	if err := s.Blobs.Put(id, norm.PNG); err != nil {
+		log.Printf("api: upload store: %v", err)
+		httpError(w, http.StatusInternalServerError, "store failed")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"image_id": id, "width": norm.Width, "height": norm.Height,
+	})
+}
+
+// newUploadID is a v4-style UUID so upload blobs share the job-id namespace
+// rules (sanitizer + serving pattern).
+func newUploadID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
 func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {

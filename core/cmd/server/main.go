@@ -80,6 +80,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("load workflow template: %v", err)
 	}
+	img2imgTpl, err := workflow.Load(workflowsDir, workflow.TplImg2Img, workflow.Img2ImgSHA256)
+	if err != nil {
+		log.Fatalf("load workflow template: %v", err)
+	}
 
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -181,7 +185,7 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl,
+			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl,
 			Cfg: api.Config{
 				Lineage: lineage, Checkpoint: checkpoint,
 				CORSOrigins:    splitNonEmpty(corsOrigins),
