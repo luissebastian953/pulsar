@@ -8,11 +8,8 @@ import (
 	"strings"
 )
 
-// POST /translate — NL → grounded tags, previewed before generate
-// (docs/architecture.md#endpoints). One shared service for all four prompt
-// boxes on both pages; subset=pose grounds against the closed pose
-// vocabulary. Dropped concepts come back to the caller for display —
-// "couldn't map: ..." is a feature, not an error.
+// POST /translate — NL → grounded tags; drops are surfaced, not errors
+// (.claude/skills/tag-grounding).
 func (s *Server) handleTranslate(w http.ResponseWriter, r *http.Request) {
 	if s.Translator == nil {
 		httpError(w, http.StatusServiceUnavailable,

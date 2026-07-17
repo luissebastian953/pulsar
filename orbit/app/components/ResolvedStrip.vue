@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import type { TranslatedTag } from '~/types/api'
 
-// The signature component (docs/frontend.md §5): live prose→tag
-// translation with category colours, post counts, and dropped concepts.
-// Dropped is a feature, not an error — it's what makes translation legible
-// instead of a black box.
+// the signature strip: chips + dropped concepts (docs/frontend.md §5)
 withDefaults(defineProps<{
   tags: TranslatedTag[]
   dropped: string[]

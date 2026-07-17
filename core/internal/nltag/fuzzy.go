@@ -1,12 +1,7 @@
 package nltag
 
-// ratio is indel-based similarity in [0, 1] — Levenshtein with substitutions
-// costing 2, normalized by combined length. This is the same formulation as
-// rapidfuzz's `ratio`, which the docs' "WRatio >= ~88" threshold is
-// calibrated against. It gates the fuzzy stage: high enough to catch typos
-// and minor wording ("siting" → sitting ≈ 0.92) while rejecting different
-// concepts that merely look close ("silver_hair" vs grey_hair ≈ 0.60 —
-// that's embedding territory).
+// ratio: indel similarity in [0, 1] (rapidfuzz `ratio` formulation — the
+// docs' threshold is calibrated against it, not plain Levenshtein).
 func ratio(a, b string) float64 {
 	if a == b {
 		return 1

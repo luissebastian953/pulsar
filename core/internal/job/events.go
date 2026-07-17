@@ -2,9 +2,7 @@ package job
 
 import "sync"
 
-// Event types published while a job runs. Terminal events carry no payload:
-// subscribers re-read the row, so the DB stays the single source of truth and
-// SSE reconnection never depends on handler state.
+// Terminal events carry no payload: subscribers re-read the row.
 const (
 	EventProgress = "progress"
 	EventDone     = "done"
@@ -18,9 +16,7 @@ type Event struct {
 	Total int
 }
 
-// Broker is an in-process pub/sub for job progress. With multiple core
-// instances this becomes Postgres LISTEN/NOTIFY; the subscriber contract
-// (snapshot from DB first, then events) already allows that swap.
+// Broker is in-process pub/sub for job progress (LISTEN/NOTIFY later).
 type Broker struct {
 	mu   sync.Mutex
 	subs map[string]map[chan Event]struct{}

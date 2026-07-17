@@ -5,10 +5,8 @@ import (
 	"slices"
 )
 
-// cors serves cross-origin clients: orbit dev on another port, and later
-// the Electron (file://) and Capacitor (capacitor://localhost) shells
-// (docs/frontend.md §6.4). Auth is bearer tokens, never cookies, so no
-// Allow-Credentials — a configured wildcard stays safe.
+// cors serves orbit dev and the shells; bearer auth, so no
+// Allow-Credentials (docs/frontend.md §6.4).
 func cors(next http.Handler, origins []string) http.Handler {
 	wildcard := slices.Contains(origins, "*")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

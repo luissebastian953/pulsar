@@ -1,9 +1,7 @@
 import type { TagCategory, TagSuggestion, TranslateResult, TranslatedTag } from '~/types/api'
 
-// Live prose→tag translation for the resolved strip. Plain mode calls
-// core's /translate (LLM decompose + tag-DB grounding); tags mode resolves
-// comma-separated tokens against /tags so chips still get category colours
-// and post counts. Dropped concepts are surfaced, never swallowed.
+// prose→tag translation for the resolved strip; drops are surfaced
+// (docs/frontend.md §5).
 export function useTranslate(subset: 'all' | 'pose' = 'all') {
   const api = useApi()
   const tags = ref<TranslatedTag[]>([])

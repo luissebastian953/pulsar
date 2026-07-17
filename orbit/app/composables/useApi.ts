@@ -1,6 +1,4 @@
-// The API base is absolute and per-target — never assume same-origin
-// (docs/frontend.md §6.2). Auth is bearer tokens in storage, never cookies
-// (§6.3); core has no auth yet, so the token slot is simply empty.
+// absolute API base + bearer-token slot, never cookies (docs/frontend.md §6)
 export function useApi() {
   const { public: { apiBase } } = useRuntimeConfig()
   const token = useLocalStorage<string>('pulsar-token', '')

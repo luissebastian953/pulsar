@@ -10,10 +10,8 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-// ClaudeDecomposer decomposes free text into visual concepts with the Claude
-// API. Structured outputs pin the response to a JSON schema, and the system
-// prompt forbids emitting tags — the tag DB decides vocabulary, never the
-// LLM (.claude/skills/tag-grounding/).
+// ClaudeDecomposer: free text → concepts via structured outputs; it never
+// emits tags (.claude/skills/tag-grounding).
 type ClaudeDecomposer struct {
 	client anthropic.Client
 	model  anthropic.Model

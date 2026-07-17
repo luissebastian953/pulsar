@@ -1,10 +1,5 @@
-// Package compliance holds the two mandatory hooks: pre-enqueue and
-// post-generation-pre-delivery (plus upload ingest). These are call sites,
-// not features — they may be stubs before phase 4, the call sites stay, and
-// every new job type wires both (docs/compliance.md).
-//
-// Callers must fail closed: an error from a checker means block/reject,
-// never pass.
+// Package compliance: the mandatory hooks. Callers fail closed — a checker
+// error means block/reject, never pass (docs/compliance.md).
 package compliance
 
 import (

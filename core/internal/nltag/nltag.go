@@ -1,9 +1,5 @@
-// Package nltag translates natural language into grounded Danbooru tags.
-// Two stages, deliberately separate: the LLM DECOMPOSES a sentence into
-// concepts — it never emits tags, because it will happily invent ones that
-// don't exist — and the tag DB GROUNDS each concept via the cascade.
-// Dropping an unmappable concept is correct behaviour, and drops are
-// surfaced to the caller, never swallowed (.claude/skills/tag-grounding/).
+// Package nltag: LLM decomposes, tag DB grounds, drops are surfaced
+// (.claude/skills/tag-grounding).
 package nltag
 
 import (
@@ -28,9 +24,7 @@ type GroundedTag struct {
 	Stage     string `json:"stage"` // exact | alias | fuzzy
 }
 
-// Result is the translate() contract: (grounded, dropped). Dropped concepts
-// are shown to the user — "couldn't map: ethereal vibes" — which is what
-// keeps tag translation legible instead of a black box.
+// Result: (grounded, dropped); dropped is shown to the user.
 type Result struct {
 	Tags    []GroundedTag `json:"tags"`
 	Dropped []string      `json:"dropped"`

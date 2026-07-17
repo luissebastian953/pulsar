@@ -9,11 +9,8 @@ import (
 	"pulsar/core/internal/job"
 )
 
-// GET /jobs/{id}/stream — SSE relay: queue position → step progress →
-// terminal state. Job state lives in the DB, never in this handler, so a
-// client can drop and re-attach to an in-flight job at any point: every
-// connection starts from a fresh DB snapshot, and the periodic re-read
-// recovers anything the broker dropped.
+// GET /jobs/{id}/stream — SSE relay. State lives in the DB, never here,
+// so re-attach always works (.claude/skills/core-job).
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	j, ok := s.getJob(w, r)
 	if !ok {

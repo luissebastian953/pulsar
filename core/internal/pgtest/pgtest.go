@@ -15,11 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Pool returns a pool whose search_path is "<schema>,public" — public stays
-// visible so pg_trgm's operator classes resolve inside test schemas. Schema
-// setup across parallel test packages is serialized with an advisory lock
-// (CREATE EXTENSION IF NOT EXISTS races with itself); the lock is
-// session-scoped, so setup runs on a single acquired connection.
+// Pool: search_path "<schema>,public" (pg_trgm resolves); setup is
+// serialized with a session-scoped advisory lock.
 func Pool(t *testing.T, schema string) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("PULSAR_TEST_DATABASE_URL")

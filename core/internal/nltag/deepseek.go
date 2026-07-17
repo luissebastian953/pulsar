@@ -11,12 +11,8 @@ import (
 	"time"
 )
 
-// DeepSeekDecomposer decomposes free text via DeepSeek's OpenAI-compatible
-// chat completions API. DeepSeek has no json_schema mode, so output is
-// constrained with JSON mode (response_format json_object) — which requires
-// the word "json" plus an example in the prompt, or the model can emit
-// endless whitespace. The same vocabulary rule applies as everywhere in
-// nltag: the LLM decomposes, it never emits tags.
+// DeepSeekDecomposer: OpenAI-compatible JSON mode — requires "json" + an
+// example in the prompt or the model can emit endless whitespace.
 type DeepSeekDecomposer struct {
 	apiKey  string
 	model   string
@@ -24,10 +20,8 @@ type DeepSeekDecomposer struct {
 	http    *http.Client
 }
 
-// NewDeepSeekDecomposer builds a decomposer. baseURL is for tests or
-// self-hosted OpenAI-compatible endpoints; empty means the real API. An
-// empty model defaults to deepseek-v4-flash (deepseek-chat is discontinued
-// as of 2026-07-24).
+// NewDeepSeekDecomposer: empty baseURL = real API; empty model =
+// deepseek-v4-flash.
 func NewDeepSeekDecomposer(apiKey, model, baseURL string) *DeepSeekDecomposer {
 	if model == "" {
 		model = "deepseek-v4-flash"

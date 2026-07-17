@@ -37,9 +37,8 @@ func (s *Store) Enqueue(ctx context.Context, kind string, params, workflow json.
 	return j, nil
 }
 
-// ClaimNext atomically claims the oldest queued job. FOR UPDATE SKIP LOCKED
-// lets concurrent workers claim without contention (docs/architecture.md#queue).
-// Returns ok=false when the queue is empty.
+// ClaimNext claims the oldest queued job (FOR UPDATE SKIP LOCKED);
+// ok=false when the queue is empty.
 func (s *Store) ClaimNext(ctx context.Context) (*Job, bool, error) {
 	j := &Job{State: StateRunning}
 	err := s.pool.QueryRow(ctx,

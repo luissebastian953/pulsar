@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Downloads pinned model weights into comfy/models/ — idempotent, resumable,
-# sha256-verified. Both run modes (docker gpu profile, run-native.sh) mount the
-# same directory, so this runs once per machine.
+# Pinned model weights → comfy/models (see comfy/README.md).
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 MODELS_DIR="${MODELS_DIR:-$DIR/models}"
 
-# Illustrious-XL v0.1 (eps) — the base the finetune ecosystem derives from.
-# 6.94 GB. Licence: Fair AI Public License 1.0-SD (docs/tuning.md#licences).
+# Illustrious-XL v0.1, 6.94 GB (licence: docs/tuning.md#licences)
 CKPT_URL="https://huggingface.co/OnomaAIResearch/Illustrious-xl-early-release-v0/resolve/main/Illustrious-XL-v0.1.safetensors"
 CKPT_SHA256="3e15ba00387db678ab4a099f75771c4f5ac67fda9e7100a01d263eaf30145aa9"
 CKPT_DEST="$MODELS_DIR/checkpoints/illustrious-xl.safetensors"

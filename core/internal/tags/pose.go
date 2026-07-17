@@ -1,9 +1,7 @@
 package tags
 
-// poseSeed is the curated seed for pose_relevant, from
-// docs/tagdb.md#pose-subset. It is a seed, not ground truth — the DB is
-// ground truth: ingest marks matches, reports misses for review, and never
-// unmarks tags (hand curation in the DB survives re-ingest).
+// poseSeed seeds pose_relevant; the DB is ground truth
+// (docs/tagdb.md#pose-subset).
 var poseSeed = []string{
 	// body
 	"standing", "sitting", "kneeling", "squatting", "crouching", "lying",

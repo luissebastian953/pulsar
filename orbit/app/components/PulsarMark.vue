@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// The pulsar mark (pulsar-singular.svg inlined so it can animate).
-// Pulses the outer ring on the 2.4s beat — the name's payoff
-// (docs/frontend.md §3).
+// inlined pulsar mark, ring pulsing on the 2.4s beat (docs/frontend.md §3)
 withDefaults(defineProps<{ size?: number }>(), { size: 26 })
 </script>
 
