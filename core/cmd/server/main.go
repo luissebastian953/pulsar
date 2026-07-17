@@ -88,6 +88,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("load workflow template: %v", err)
 	}
+	ipaFrag, err := workflow.LoadFragment(workflowsDir, workflow.FragIPAdapter, workflow.IPAdapterSHA256)
+	if err != nil {
+		log.Fatalf("load workflow fragment: %v", err)
+	}
 
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -189,7 +193,7 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl,
+			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag,
 			Cfg: api.Config{
 				Lineage: lineage, Checkpoint: checkpoint,
 				CORSOrigins:    splitNonEmpty(corsOrigins),

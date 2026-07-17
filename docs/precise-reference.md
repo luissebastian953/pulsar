@@ -50,8 +50,11 @@ Chain for character + style:
   aesthetic without composition; composition takes layout without style. This gives
   us NAI's character-vs-style split from one adapter, cleaner than what they expose.
 - **`start_at` / `end_at`** → step-range scheduling. Ending around 0.7 lets the
-  prompt reclaim the last steps for detail. Under-used; worth exposing internally
-  even if not to users.
+  prompt reclaim the last steps for detail. **Confirmed empirically on
+  Illustrious**: full-range linear at 0.8 produces severe color burn (pink wash,
+  banding) and identity drift; `end_at: 0.7` eliminates the burn outright, so
+  the fragment ships it as the default. Working recipe: weight ~0.5 + identity
+  tags in the prompt + end_at 0.7 → clean identity carry-over.
 - **`attn_mask`** → below.
 
 ## Where we beat NovelAI

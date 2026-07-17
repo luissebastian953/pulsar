@@ -54,7 +54,9 @@ type Server struct {
 	PoseTpl    workflow.Graph // pose base (spine + extraction), hash-verified at load
 	Img2ImgTpl workflow.Graph // img2img base (LoadImage → VAEEncode), hash-verified at load
 	InpaintTpl workflow.Graph // inpaint base (img2img + noise mask), hash-verified at load
-	Cfg        Config
+	// IPAdapterFrag composes Precise Reference onto any base (hash-verified)
+	IPAdapterFrag *workflow.Fragment
+	Cfg           Config
 }
 
 func (s *Server) Handler() http.Handler {
@@ -90,6 +92,9 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		Kind    string `json:"kind"`
 		ImageID string `json:"image_id"`
 		MaskID  string `json:"mask_id"`
+		// RefID composes the Precise Reference fragment onto any
+		// non-pose kind (docs/precise-reference.md)
+		RefID string `json:"reference_id"`
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
@@ -103,6 +108,24 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := workflow.OutputRoles(req.Kind); !ok {
 		httpError(w, http.StatusBadRequest, "unknown kind "+strconv.Quote(req.Kind))
 		return
+	}
+	if req.RefID != "" {
+		if req.Kind == "pose" {
+			httpError(w, http.StatusBadRequest, "reference does not apply to pose")
+			return
+		}
+		if !imageIDPattern.MatchString(req.RefID) {
+			httpError(w, http.StatusBadRequest, "invalid reference_id")
+			return
+		}
+		if _, _, err := s.blobDims(req.RefID); err != nil {
+			httpError(w, http.StatusBadRequest, "unknown reference_id")
+			return
+		}
+		if req.RefStrength == nil {
+			d := 0.8 // strong identity, still promptable (docs/precise-reference.md)
+			req.RefStrength = &d
+		}
 	}
 	if req.Kind == "img2img" || req.Kind == "inpaint" {
 		if !imageIDPattern.MatchString(req.ImageID) {
@@ -182,6 +205,9 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	default:
 		graph, err = workflow.BuildTxt2Img(s.Tpl, spec, s.Cfg.Checkpoint)
 	}
+	if err == nil && req.RefID != "" {
+		graph, err = workflow.ApplyIPAdapter(graph, s.IPAdapterFrag, req.RefID+".png", spec.RefStrength)
+	}
 	if err != nil {
 		log.Printf("api: build workflow: %v", err)
 		httpError(w, http.StatusInternalServerError, "workflow build failed")
@@ -193,7 +219,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "params marshal failed")
 		return
 	}
-	j, err := s.Store.Enqueue(r.Context(), req.Kind, params, graph, req.ImageID, req.MaskID)
+	j, err := s.Store.Enqueue(r.Context(), req.Kind, params, graph, req.ImageID, req.MaskID, req.RefID)
 	if err != nil {
 		log.Printf("api: enqueue: %v", err)
 		httpError(w, http.StatusInternalServerError, "enqueue failed")

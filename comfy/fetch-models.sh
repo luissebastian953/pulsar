@@ -35,3 +35,12 @@ fetch() {
 }
 
 fetch "$CKPT_URL" "$CKPT_SHA256" "$CKPT_DEST"
+
+# IP-Adapter Plus SDXL + its CLIP-ViT-H encoder (Precise Reference,
+# docs/precise-reference.md); filenames are what IPAdapterUnifiedLoader expects
+fetch "https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors" \
+  "3f5062b8400c94b7159665b21ba5c62acdcd7682262743d7f2aefedef00e6581" \
+  "$MODELS_DIR/ipadapter/ip-adapter-plus_sdxl_vit-h.safetensors"
+fetch "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors" \
+  "6ca9667da1ca9e0b0f75e46bb030f7e011f44f86cbfb8d5a36590fcd7507b030" \
+  "$MODELS_DIR/clip_vision/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"

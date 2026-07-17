@@ -21,7 +21,9 @@ type Request struct {
 	Scheduler string  `json:"scheduler,omitempty"`
 	Seed      *int64  `json:"seed,omitempty"`
 	// Denoise applies to image-input kinds; 1.0 ignores the input
-	Denoise     *float64 `json:"denoise,omitempty"`
+	Denoise *float64 `json:"denoise,omitempty"`
+	// RefStrength is the Precise Reference fidelity (docs/precise-reference.md)
+	RefStrength *float64 `json:"ref_strength,omitempty"`
 	QualityTags *bool    `json:"quality_tags,omitempty"`
 	UCPreset    *bool    `json:"uc_preset,omitempty"`
 }
@@ -29,18 +31,19 @@ type Request struct {
 // Spec is the resolved parameter set, stored verbatim on the job row.
 // Same Seed + same Spec must reproduce the same image.
 type Spec struct {
-	Prompt    string  `json:"prompt"`
-	Negative  string  `json:"negative"`
-	Width     int     `json:"width"`
-	Height    int     `json:"height"`
-	Steps     int     `json:"steps"`
-	CFG       float64 `json:"cfg"`
-	Sampler   string  `json:"sampler"`
-	Scheduler string  `json:"scheduler"`
-	Seed      int64   `json:"seed"`
-	Denoise   float64 `json:"denoise,omitempty"`
-	BatchSize int     `json:"batch_size"`
-	Lineage   string  `json:"lineage"`
+	Prompt      string  `json:"prompt"`
+	Negative    string  `json:"negative"`
+	Width       int     `json:"width"`
+	Height      int     `json:"height"`
+	Steps       int     `json:"steps"`
+	CFG         float64 `json:"cfg"`
+	Sampler     string  `json:"sampler"`
+	Scheduler   string  `json:"scheduler"`
+	Seed        int64   `json:"seed"`
+	Denoise     float64 `json:"denoise,omitempty"`
+	RefStrength float64 `json:"ref_strength,omitempty"`
+	BatchSize   int     `json:"batch_size"`
+	Lineage     string  `json:"lineage"`
 }
 
 type Options struct {
@@ -161,6 +164,12 @@ func Build(req Request, opts Options) (Spec, error) {
 			return Spec{}, fmt.Errorf("denoise must be 0.05..0.95")
 		}
 		s.Denoise = *req.Denoise
+	}
+	if req.RefStrength != nil {
+		if *req.RefStrength < 0 || *req.RefStrength > 1.2 {
+			return Spec{}, fmt.Errorf("ref_strength must be 0..1.2")
+		}
+		s.RefStrength = *req.RefStrength
 	}
 
 	if quality := strings.TrimSpace(opts.QualityTags); quality != "" && (req.QualityTags == nil || *req.QualityTags) {

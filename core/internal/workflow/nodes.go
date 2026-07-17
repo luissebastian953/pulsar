@@ -12,6 +12,11 @@ const (
 	TplImg2Img    = "img2img.json"
 	Img2ImgSHA256 = "sha256:b8dfd8604a5b21bbc6e126ee1fc7be74444be7c670028b3a0ba5cb11e138ee41"
 
+	// fragments live under patches/ and compose onto any base sharing the
+	// spine IDs (.claude/skills/comfy-workflow)
+	FragIPAdapter   = "patches/ipadapter.json"
+	IPAdapterSHA256 = "sha256:dbd6bba89c2810e8e487c3037252b5273bdec22226ecfdc3c15cd795c101c99b"
+
 	TplInpaint    = "inpaint.json"
 	InpaintSHA256 = "sha256:e1323578c44df103a93f5f9fdde55143fa8498ada345584007399a499d93c3d7"
 )
@@ -107,6 +112,18 @@ var Inpaint = struct {
 	LoadImage:  "8",
 	LoadMask:   "10",
 	NoiseMask:  "12",
+}
+
+// IPAdapter fragment node IDs (reserved range 20+ never collides with a
+// base template).
+var IPAdapter = struct {
+	LoadRef string
+	Loader  string
+	Apply   string
+}{
+	LoadRef: "20",
+	Loader:  "21",
+	Apply:   "22",
 }
 
 // OutputRoles: kind → role → SaveImage node; role "" is the primary

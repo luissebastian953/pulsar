@@ -76,6 +76,10 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ipaFrag, err := workflow.LoadFragment("../../../workflows", workflow.FragIPAdapter, workflow.IPAdapterSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	broker := job.NewBroker()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -88,7 +92,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl,
+		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag,
 		Cfg: api.Config{
 			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
 			QualityTags:    "masterpiece, best quality",
@@ -410,6 +414,63 @@ func TestInpaintMaskDimsMustMatch(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("dims mismatch = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestEndToEndReference: the IP-Adapter fragment composes onto txt2img —
+// nodes added, KSampler rewired, reference forwarded to the process.
+func TestEndToEndReference(t *testing.T) {
+	e := newEnv(t, "e2e_ref", compliance.Stub{})
+	ref := e.uploadPNG(t, 100, 150)
+
+	id := e.generate(t, `{"prompt": "1girl, cafe", "seed": 3, "reference_id": "`+ref+`", "ref_strength": 0.9}`)
+	v := e.waitTerminal(t, id)
+	if v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+	if _, ok := e.fake.Upload(ref + ".png"); !ok {
+		t.Error("reference was not forwarded")
+	}
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g[workflow.IPAdapter.LoadRef].Inputs["image"]; got != ref+".png" {
+		t.Errorf("ref load = %v", got)
+	}
+	if got := g[workflow.IPAdapter.Apply].Inputs["weight"]; got != 0.9 {
+		t.Errorf("weight = %v, want 0.9", got)
+	}
+	// KSampler now takes its model from the adapter chain
+	ref2, ok := g[workflow.Txt2Img.Sampler].Inputs["model"].([]any)
+	if !ok || ref2[0] != workflow.IPAdapter.Apply {
+		t.Errorf("KSampler model = %v, want link to node %s", g[workflow.Txt2Img.Sampler].Inputs["model"], workflow.IPAdapter.Apply)
+	}
+	// stored params carry the resolved strength
+	var spec assembly.Spec
+	json.Unmarshal(v.Params, &spec)
+	if spec.RefStrength != 0.9 {
+		t.Errorf("stored ref_strength = %v", spec.RefStrength)
+	}
+}
+
+func TestReferenceComposesOnImg2Img(t *testing.T) {
+	e := newEnv(t, "e2e_ref_i2i", compliance.Stub{})
+	img := e.uploadPNG(t, 100, 150)
+	ref := e.uploadPNG(t, 100, 150)
+	id := e.generate(t, `{"prompt": "1girl", "seed": 4, "kind": "img2img", "image_id": "`+img+`", "reference_id": "`+ref+`"}`)
+	if v := e.waitTerminal(t, id); v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+	for _, name := range []string{img + ".png", ref + ".png"} {
+		if _, ok := e.fake.Upload(name); !ok {
+			t.Errorf("%s not forwarded", name)
+		}
+	}
+	var g workflow.Graph
+	json.Unmarshal(e.fake.LastGraph(), &g)
+	if got := g[workflow.IPAdapter.Apply].Inputs["weight"]; got != 0.8 {
+		t.Errorf("default weight = %v, want 0.8", got)
 	}
 }
 

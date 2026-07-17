@@ -24,12 +24,12 @@ func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 
-func (s *Store) Enqueue(ctx context.Context, kind string, params, workflow json.RawMessage, inputPath, maskPath string) (*Job, error) {
-	j := &Job{Kind: kind, State: StateQueued, Params: params, Workflow: workflow, InputPath: inputPath, MaskPath: maskPath}
+func (s *Store) Enqueue(ctx context.Context, kind string, params, workflow json.RawMessage, inputPath, maskPath, refPath string) (*Job, error) {
+	j := &Job{Kind: kind, State: StateQueued, Params: params, Workflow: workflow, InputPath: inputPath, MaskPath: maskPath, RefPath: refPath}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO jobs (kind, params, workflow, input_path, mask_path) VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''))
+		`INSERT INTO jobs (kind, params, workflow, input_path, mask_path, ref_path) VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''))
 		 RETURNING id::text, created_at`,
-		kind, params, workflow, inputPath, maskPath,
+		kind, params, workflow, inputPath, maskPath, refPath,
 	).Scan(&j.ID, &j.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("enqueue: %w", err)
@@ -49,8 +49,8 @@ func (s *Store) ClaimNext(ctx context.Context) (*Job, bool, error) {
 		   LIMIT 1
 		   FOR UPDATE SKIP LOCKED
 		 )
-		 RETURNING id::text, kind, params, workflow, coalesce(input_path, ''), coalesce(mask_path, '')`,
-	).Scan(&j.ID, &j.Kind, &j.Params, &j.Workflow, &j.InputPath, &j.MaskPath)
+		 RETURNING id::text, kind, params, workflow, coalesce(input_path, ''), coalesce(mask_path, ''), coalesce(ref_path, '')`,
+	).Scan(&j.ID, &j.Kind, &j.Params, &j.Workflow, &j.InputPath, &j.MaskPath, &j.RefPath)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}

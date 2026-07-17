@@ -25,7 +25,7 @@ func TestEnqueueClaimFIFO(t *testing.T) {
 
 	var ids []string
 	for i := 0; i < 3; i++ {
-		j, err := s.Enqueue(ctx, "txt2img", params, graphRaw, "", "")
+		j, err := s.Enqueue(ctx, "txt2img", params, graphRaw, "", "", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +61,7 @@ func TestTransitionGuards(t *testing.T) {
 	s := testStore(t, "job_guards")
 	ctx := context.Background()
 
-	j, err := s.Enqueue(ctx, "txt2img", params, graphRaw, "", "")
+	j, err := s.Enqueue(ctx, "txt2img", params, graphRaw, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestBlockedIsFirstClass(t *testing.T) {
 	s := testStore(t, "job_blocked")
 	ctx := context.Background()
 
-	j, err := s.Enqueue(ctx, "txt2img", params, graphRaw, "", "")
+	j, err := s.Enqueue(ctx, "txt2img", params, graphRaw, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestHistory(t *testing.T) {
 	s := testStore(t, "job_history")
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
-		if _, err := s.Enqueue(ctx, "txt2img", params, graphRaw, "", ""); err != nil {
+		if _, err := s.Enqueue(ctx, "txt2img", params, graphRaw, "", "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}

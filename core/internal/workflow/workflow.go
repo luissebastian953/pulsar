@@ -150,6 +150,60 @@ func BuildInpaint(tpl Graph, spec assembly.Spec, checkpoint, inputName, maskName
 	})
 }
 
+// Fragment is a hash-pinned feature patch: nodes to add plus input rewires
+// on the base — data, like templates, never graphs built in code.
+type Fragment struct {
+	Add Graph                     `json:"add"`
+	Set map[string]map[string]any `json:"set"`
+}
+
+// LoadFragment reads a patch fragment and verifies its content hash.
+func LoadFragment(dir, name, wantSHA256 string) (*Fragment, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return nil, err
+	}
+	got := fmt.Sprintf("sha256:%x", sha256.Sum256(raw))
+	if got != wantSHA256 {
+		return nil, fmt.Errorf("fragment %s hash %s does not match pinned %s", name, got, wantSHA256)
+	}
+	var f Fragment
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("fragment %s: %w", name, err)
+	}
+	return &f, nil
+}
+
+// ApplyIPAdapter composes the reference fragment onto an already-built
+// graph, patching the reference filename and weight.
+func ApplyIPAdapter(graph json.RawMessage, frag *Fragment, refName string, weight float64) (json.RawMessage, error) {
+	var g Graph
+	if err := json.Unmarshal(graph, &g); err != nil {
+		return nil, err
+	}
+	for id, node := range frag.Add {
+		if _, exists := g[id]; exists {
+			return nil, fmt.Errorf("fragment node %s collides with base", id)
+		}
+		clone := *node
+		g[id] = &clone
+	}
+	for id, inputs := range frag.Set {
+		for input, value := range inputs {
+			if err := g.Set(id, input, value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := g.Set(IPAdapter.LoadRef, "image", refName); err != nil {
+		return nil, err
+	}
+	if err := g.Set(IPAdapter.Apply, "weight", weight); err != nil {
+		return nil, err
+	}
+	return json.Marshal(g)
+}
+
 // BuildPose: spine patches + extractor resolution at the render's short side.
 func BuildPose(tpl Graph, spec assembly.Spec, checkpoint string) (json.RawMessage, error) {
 	res := min(spec.Width, spec.Height)
