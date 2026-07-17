@@ -44,6 +44,9 @@ export type GenerationRequest = {
   image_id?: string
   mask_id?: string
   denoise?: number
+  // Precise Reference: uploaded id + fidelity 0-1.2
+  reference_id?: string
+  ref_strength?: number
   prompt: string
   negative?: string
   width?: number

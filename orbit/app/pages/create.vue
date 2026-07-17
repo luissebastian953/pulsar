@@ -29,6 +29,27 @@ const poseRef = useState<{ seed: string, label: string } | null>('poseRef', () =
 const openRefFold = useState('openRefFold', () => false)
 const refStrength = ref(0.6)
 
+// Precise Reference: character identity from an uploaded image
+const charRefId = ref('')
+const charRefPreview = ref('')
+const charRefFidelity = ref(0.8)
+const charRefError = ref('')
+
+async function onCharRefPick(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  charRefError.value = ''
+  try {
+    const up = await api.upload<UploadResult>('/uploads', file)
+    charRefId.value = up.image_id
+    charRefPreview.value = api.imageUrl(`/images/${up.image_id}`)
+  }
+  catch (err: unknown) {
+    const ex = err as { data?: { error?: string } }
+    charRefError.value = ex.data?.error || 'upload failed'
+  }
+}
+
 // image-to-image / inpaint: eager upload on pick so the mask editor can
 // paint on the normalized image (dims always match the bucket)
 const i2iFile = ref<File | null>(null)
@@ -161,6 +182,10 @@ function generate() {
     if (maskId.value) req.mask_id = maskId.value
     req.denoise = i2iStrength.value
   }
+  if (charRefId.value) {
+    req.reference_id = charRefId.value
+    req.ref_strength = charRefFidelity.value
+  }
   const s = seedText.value.trim()
   if (/^\d+$/.test(s)) req.seed = Number(s)
   job.start(req)
@@ -260,7 +285,7 @@ const charBadge = computed(() =>
           </div>
         </Fold>
 
-        <Fold v-model="folds.ref" label="Reference" :badge="poseRef ? 'pose skeleton' : 'off'">
+        <Fold v-model="folds.ref" label="Reference" :badge="charRefId ? 'character' : (poseRef ? 'pose skeleton' : 'off')">
           <div class="flex flex-col gap-2">
             <template v-if="poseRef">
               <div class="flex items-center gap-2.5 rounded-ctrl border border-line bg-raised px-[11px] py-[9px]">
@@ -278,15 +303,30 @@ const charBadge = computed(() =>
                 Above 1.0 the reference gets hard to override with words.
               </div>
             </template>
-            <button
-              class="focus-ring w-full cursor-not-allowed rounded-ctrl border border-dashed border-line-hi py-[9px] text-center text-[12.5px] text-faint"
-              title="Character references land with image ingest"
-              disabled
+            <template v-if="charRefId">
+              <div class="flex items-center gap-2.5 rounded-ctrl border border-line bg-void p-2">
+                <img :src="charRefPreview" alt="reference" class="size-14 flex-none rounded-lg object-cover">
+                <div class="min-w-0 flex-1">
+                  <div class="text-[12.5px] text-text">Character reference</div>
+                  <div class="font-mono text-[10.5px] text-faint">identity via IP-Adapter Plus</div>
+                </div>
+                <button class="focus-ring cursor-pointer text-faint hover:text-t-artist" aria-label="remove reference" @click="charRefId = ''; charRefPreview = ''">
+                  <Icon name="lucide:x" :size="12" />
+                </button>
+              </div>
+              <SliderRow v-model="charRefFidelity" label="Fidelity" :min="0" :max="1.2" :step="0.05" :decimals="2" />
+              <div class="text-[11.5px] leading-relaxed text-faint">
+                ~0.5 loose, ~0.8 strong; above 1.0 the reference gets hard to override with words.
+              </div>
+            </template>
+            <label
+              v-else
+              class="focus-ring flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-ctrl border border-dashed border-line py-[9px] text-center text-[12.5px] text-dim hover:border-line-hi"
             >
-              <span class="inline-flex items-center justify-center gap-1.5">
-                <Icon name="lucide:plus" :size="13" />Character reference
-              </span>
-            </button>
+              <Icon name="lucide:plus" :size="13" />Character reference
+              <input type="file" accept="image/png,image/jpeg" class="hidden" @change="onCharRefPick">
+            </label>
+            <div v-if="charRefError" class="text-[11px] text-warn">{{ charRefError }}</div>
           </div>
         </Fold>
 
