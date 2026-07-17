@@ -5,6 +5,7 @@
 .env
 .env.*
 !.env.example
+.claude/settings.local.json
 
 # transfer artifact (original doc bundle backup)
 pulsar_skill.zip
@@ -19,6 +20,8 @@ node_modules/
 orbit/.nuxt/
 orbit/.output/
 orbit/dist
+*.tsbuildinfo
+pnpm-debug.log*
 
 # Python (eval)
 __pycache__/
