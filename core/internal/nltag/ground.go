@@ -2,33 +2,25 @@ package nltag
 
 import (
 	"context"
+	"log"
 
 	"pulsar/core/internal/tags"
 )
 
-// Grounder runs the grounding cascade against the tag DB:
-//
-//	concept → normalise
-//	        → exact / alias hit?     → canonical
-//	        → fuzzy (ratio >= ~0.88) → canonical   (typos, minor wording)
-//	        → nil                    → DROP
-//
-// The embedding-NN stage (paraphrases, e.g. "silver hair" → grey_hair)
-// slots in after fuzzy when it lands. Returning nil is correct behaviour,
-// not a failure — force-matching is how you get prompts that quietly
-// produce garbage (docs/tagdb.md).
+// Grounder runs the cascade: exact/alias → fuzzy → live → drop
+// (.claude/skills/tag-grounding).
 type Grounder struct {
 	Store *tags.Store
 	// FuzzyRatio is the accept threshold on normalized edit-distance
 	// similarity; the Go stand-in for the docs' "WRatio >= ~88".
 	FuzzyRatio float64
+	// Live validates DB misses against Danbooru (nil = stage off).
+	Live *tags.Live
 }
 
 const (
 	defaultFuzzyRatio = 0.88
-	// Trigram similarity ranks differently than the ratio gate — the true
-	// match can sit far down the candidate list behind superficially
-	// similar tags — so fetch a wide pool and let the gate filter.
+	// wide pool: trigram ranking buries true matches (.claude/skills/tag-grounding)
 	fuzzyCandidateLimit = 25
 )
 
@@ -62,11 +54,27 @@ func (g *Grounder) Ground(ctx context.Context, concept string, poseOnly bool) (*
 			best, bestRatio = &cands[i], r
 		}
 	}
-	if best == nil {
-		return nil, nil // drop — never force-match
+	if best != nil {
+		return &GroundedTag{
+			Canonical: best.Canonical, Category: best.Category, Count: best.Count,
+			Concept: concept, Stage: "fuzzy",
+		}, nil
 	}
-	return &GroundedTag{
-		Canonical: best.Canonical, Category: best.Category, Count: best.Count,
-		Concept: concept, Stage: "fuzzy",
-	}, nil
+
+	if g.Live != nil && !poseOnly {
+		res, err := g.Live.Ground(ctx, concept)
+		if err != nil {
+			// Danbooru down degrades to a drop, never a failed translation
+			log.Printf("nltag: live stage for %q: %v", concept, err)
+			return nil, nil
+		}
+		if res != nil {
+			return &GroundedTag{
+				Canonical: res.Canonical, Category: res.Category, Count: res.Count,
+				Concept: concept, Stage: "live",
+			}, nil
+		}
+	}
+
+	return nil, nil // drop — never force-match
 }

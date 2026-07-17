@@ -1,13 +1,12 @@
-// Package tags is the tag database layer: autocomplete and canonical
-// resolution over the intersection of "exists on Danbooru" and "the model
-// learned it" (docs/tagdb.md). nltag grounds against this DB, never against
-// the LLM's imagination.
+// Package tags: the tag DB — autocomplete + canonical resolution
+// (docs/tagdb.md, .claude/skills/tag-grounding).
 package tags
 
 import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,12 +18,13 @@ type Store struct {
 
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
-// Suggestion is the UI contract: {canonical, category, count}
-// (docs/tagdb.md#ui-contract). Category drives pill colour in the editor.
+// Suggestion is the UI contract (docs/tagdb.md#ui-contract); CreatedAt is
+// the Danbooru creation date, nil = not yet tracked.
 type Suggestion struct {
-	Canonical string `json:"canonical"`
-	Category  string `json:"category"`
-	Count     int    `json:"count"`
+	Canonical string     `json:"canonical"`
+	Category  string     `json:"category"`
+	Count     int        `json:"count"`
+	CreatedAt *time.Time `json:"-"`
 }
 
 // Normalize maps user input to tag-name form: lowercase, trimmed,
@@ -39,10 +39,8 @@ func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-// Autocomplete returns up to limit suggestions for q, prefix matches first,
-// then by post_count. Alias hits resolve to their canonical tag. poseOnly
-// restricts to the pose vocabulary — grounding against ~200 candidates
-// instead of ~50k is measurably more accurate (docs/tagdb.md#pose-subset).
+// Autocomplete: prefix matches first, then post_count; aliases resolve to
+// canonical; poseOnly restricts to the pose vocabulary.
 func (s *Store) Autocomplete(ctx context.Context, q string, poseOnly bool, limit int) ([]Suggestion, error) {
 	q = Normalize(q)
 	if q == "" {
@@ -53,18 +51,18 @@ func (s *Store) Autocomplete(ctx context.Context, q string, poseOnly bool, limit
 
 	rows, err := s.pool.Query(ctx, `
 		WITH hits AS (
-			SELECT name, category, post_count, pose_relevant,
+			SELECT name, category, post_count, pose_relevant, danbooru_created_at,
 			       name LIKE $2 ESCAPE '\' AS pref
 			FROM tags
 			WHERE name LIKE $1 ESCAPE '\'
 			UNION ALL
-			SELECT t.name, t.category, t.post_count, t.pose_relevant,
+			SELECT t.name, t.category, t.post_count, t.pose_relevant, t.danbooru_created_at,
 			       a.alias LIKE $2 ESCAPE '\'
 			FROM tag_aliases a
 			JOIN tags t ON t.name = a.canonical
 			WHERE a.alias LIKE $1 ESCAPE '\'
 		)
-		SELECT name, category, max(post_count) AS count, bool_or(pref) AS pref
+		SELECT name, category, max(post_count) AS count, max(danbooru_created_at), bool_or(pref) AS pref
 		FROM hits
 		WHERE NOT $3 OR pose_relevant
 		GROUP BY name, category
@@ -80,7 +78,7 @@ func (s *Store) Autocomplete(ctx context.Context, q string, poseOnly bool, limit
 	for rows.Next() {
 		var sg Suggestion
 		var pref bool
-		if err := rows.Scan(&sg.Canonical, &sg.Category, &sg.Count, &pref); err != nil {
+		if err := rows.Scan(&sg.Canonical, &sg.Category, &sg.Count, &sg.CreatedAt, &pref); err != nil {
 			return nil, err
 		}
 		out = append(out, sg)
@@ -93,17 +91,12 @@ type Resolution struct {
 	Canonical string
 	Category  string
 	Count     int
-	Stage     string // "exact" or "alias"
+	Stage     string // "exact", "alias", or "live" (validated against Danbooru)
+	CreatedAt *time.Time
 }
 
-// Resolve snaps a concept to a canonical tag via the exact and alias stages
-// of the grounding cascade (the fuzzy stage lives in nltag; embedding comes
-// later). nil means the model has no tag for it: callers DROP the concept —
-// that is correct behaviour, never force-match (docs/tagdb.md).
-//
-// A miss retries with separators squeezed out: "1 girl" normalizes to
-// "1_girl", but the canonical tag is "1girl" — a pattern (1girl, 2girls, …)
-// trigram ranking is bad at, so it belongs to the exact stage.
+// Resolve: exact + alias stages; nil = drop. Misses retry squeezed
+// ("1_girl" → "1girl") — see .claude/skills/tag-grounding.
 func (s *Store) Resolve(ctx context.Context, concept string, poseOnly bool) (*Resolution, error) {
 	name := Normalize(concept)
 	if name == "" {
@@ -122,14 +115,14 @@ func (s *Store) Resolve(ctx context.Context, concept string, poseOnly bool) (*Re
 func (s *Store) resolveName(ctx context.Context, name string, poseOnly bool) (*Resolution, error) {
 	r := &Resolution{}
 	err := s.pool.QueryRow(ctx, `
-		SELECT name, category, post_count, 'exact' AS stage FROM tags
+		SELECT name, category, post_count, danbooru_created_at, 'exact' AS stage FROM tags
 		WHERE name = $1 AND (NOT $2 OR pose_relevant)
 		UNION ALL
-		SELECT t.name, t.category, t.post_count, 'alias' FROM tag_aliases a
+		SELECT t.name, t.category, t.post_count, t.danbooru_created_at, 'alias' FROM tag_aliases a
 		JOIN tags t ON t.name = a.canonical
 		WHERE a.alias = $1 AND (NOT $2 OR t.pose_relevant)
 		ORDER BY stage DESC
-		LIMIT 1`, name, poseOnly).Scan(&r.Canonical, &r.Category, &r.Count, &r.Stage)
+		LIMIT 1`, name, poseOnly).Scan(&r.Canonical, &r.Category, &r.Count, &r.CreatedAt, &r.Stage)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -137,6 +130,27 @@ func (s *Store) resolveName(ctx context.Context, name string, poseOnly bool) (*R
 		return nil, err
 	}
 	return r, nil
+}
+
+// UpsertTag is the live-validation write-through path.
+func (s *Store) UpsertTag(ctx context.Context, name, category string, count int, createdAt *time.Time, alias string) error {
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO tags (name, category, post_count, danbooru_created_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (name) DO UPDATE
+		SET category = EXCLUDED.category, post_count = EXCLUDED.post_count,
+		    danbooru_created_at = EXCLUDED.danbooru_created_at`,
+		name, category, count, createdAt); err != nil {
+		return err
+	}
+	if alias == "" || alias == name {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO tag_aliases (alias, canonical) VALUES ($1, $2)
+		ON CONFLICT (alias) DO UPDATE SET canonical = EXCLUDED.canonical`,
+		alias, name)
+	return err
 }
 
 // Candidate is a trigram-similar tag (or alias, resolved to its canonical)
@@ -149,9 +163,7 @@ type Candidate struct {
 	Similarity float64
 }
 
-// FuzzyCandidates returns pg_trgm-similar candidates for a concept. It only
-// prunes the search space — the accept/drop decision belongs to the caller
-// (nltag applies its ratio threshold, per docs/tagdb.md#grounding-cascade).
+// FuzzyCandidates prunes the search space; accept/drop is the caller's.
 func (s *Store) FuzzyCandidates(ctx context.Context, concept string, poseOnly bool, limit int) ([]Candidate, error) {
 	name := Normalize(concept)
 	if name == "" {

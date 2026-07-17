@@ -13,18 +13,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Ingest pulls the Danbooru tag vocabulary into Postgres:
-//
-//	dump → filter (post_count >= floor, not deprecated) → upsert tags
-//	     → resolve aliases → upsert tag_aliases → classify pose_relevant
-//
-// Idempotent: re-running refreshes counts and categories; pose_relevant is
-// only ever set, never cleared, so hand curation in the DB survives.
+// Ingest pulls the Danbooru vocabulary into Postgres. Idempotent;
+// pose_relevant is set, never cleared (docs/tagdb.md#ingest).
 type IngestOptions struct {
 	BaseURL string
-	// MinPostCount is the ingest floor. The runtime accuracy lever
-	// (docs/tagdb.md#min_post_count) filters higher at query time; the
-	// floor just keeps one-off tags the model never learned out of the DB.
+	// MinPostCount is the ingest floor (docs/tagdb.md#min_post_count).
 	MinPostCount int
 	PageSize     int
 	Throttle     time.Duration // pause between requests; be polite
@@ -51,10 +44,11 @@ var danbooruCategories = map[int]string{
 }
 
 type danbooruTag struct {
-	Name         string `json:"name"`
-	PostCount    int    `json:"post_count"`
-	Category     int    `json:"category"`
-	IsDeprecated bool   `json:"is_deprecated"`
+	Name         string     `json:"name"`
+	PostCount    int        `json:"post_count"`
+	Category     int        `json:"category"`
+	IsDeprecated bool       `json:"is_deprecated"`
+	CreatedAt    *time.Time `json:"created_at"`
 }
 
 type danbooruAlias struct {
@@ -126,6 +120,7 @@ func (in *ingester) tags(ctx context.Context) error {
 		in.stats.Pages++
 
 		names, cats, counts := make([]string, 0, len(batch)), make([]string, 0, len(batch)), make([]int, 0, len(batch))
+		created := make([]*time.Time, 0, len(batch))
 		for _, t := range batch {
 			cat, known := danbooruCategories[t.Category]
 			if t.IsDeprecated || !known || t.Name == "" {
@@ -138,14 +133,16 @@ func (in *ingester) tags(ctx context.Context) error {
 			names = append(names, t.Name)
 			cats = append(cats, cat)
 			counts = append(counts, t.PostCount)
+			created = append(created, t.CreatedAt)
 		}
 		if len(names) > 0 {
 			_, err := in.pool.Exec(ctx, `
-				INSERT INTO tags (name, category, post_count)
-				SELECT * FROM unnest($1::text[], $2::text[], $3::int[])
+				INSERT INTO tags (name, category, post_count, danbooru_created_at)
+				SELECT * FROM unnest($1::text[], $2::text[], $3::int[], $4::timestamptz[])
 				ON CONFLICT (name) DO UPDATE
-				SET category = EXCLUDED.category, post_count = EXCLUDED.post_count`,
-				names, cats, counts)
+				SET category = EXCLUDED.category, post_count = EXCLUDED.post_count,
+				    danbooru_created_at = EXCLUDED.danbooru_created_at`,
+				names, cats, counts, created)
 			if err != nil {
 				return err
 			}
@@ -212,9 +209,7 @@ func (in *ingester) aliases(ctx context.Context) error {
 }
 
 func (in *ingester) pose(ctx context.Context) error {
-	// seeds may have been renamed on Danbooru since the docs were written
-	// (e.g. hand_on_hip → hand_on_own_hip), so resolve through aliases and
-	// mark the current canonical tag
+	// resolve seeds through aliases — Danbooru renames tags
 	rows, err := in.pool.Query(ctx, `
 		SELECT name, name FROM tags WHERE name = ANY($1)
 		UNION

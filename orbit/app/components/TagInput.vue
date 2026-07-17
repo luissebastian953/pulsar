@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { TagSuggestion } from '~/types/api'
+import type { TagLookupResult, TagSuggestion } from '~/types/api'
 import {
   ComboboxAnchor,
   ComboboxContent,
@@ -10,9 +10,7 @@ import {
   ComboboxViewport,
 } from 'reka-ui'
 
-// The one component not to hand-roll (docs/frontend.md §1): ARIA combobox
-// semantics, keyboard handling, portal positioning, and composition events
-// come from Reka; the vocabulary comes from core's /tags.
+// Reka combobox over core's /tags (docs/frontend.md §1)
 const props = withDefaults(defineProps<{ subset?: 'all' | 'pose' }>(), { subset: 'all' })
 const model = defineModel<string[]>({ required: true })
 
@@ -30,7 +28,13 @@ const search = useDebounceFn(async (q: string) => {
     const res = await api.get<{ tags: TagSuggestion[] }>(
       `/tags?q=${encodeURIComponent(q)}&subset=${props.subset}`,
     )
-    suggestions.value = res.tags.filter(s => !model.value.includes(s.canonical))
+    let tags = res.tags.filter(s => !model.value.includes(s.canonical))
+    // DB miss → live Danbooru lookup (art subset only)
+    if (!tags.length && props.subset === 'all' && q.trim().length >= 3) {
+      const live = await api.get<TagLookupResult>(`/tags/lookup?name=${encodeURIComponent(q)}`)
+      if (live.found && !model.value.includes(live.tag.canonical)) tags = [live.tag]
+    }
+    suggestions.value = tags
     open.value = suggestions.value.length > 0
   }
   catch {
@@ -109,6 +113,16 @@ function onKeydown(e: KeyboardEvent) {
               }"
             />
             <span class="flex-1 font-mono text-[12.5px] text-text">{{ s.canonical.replaceAll('_', ' ') }}</span>
+            <span
+              v-if="s.newer_than_model"
+              class="rounded-full border border-warn/40 px-1.5 text-2xs text-warn"
+              title="on Danbooru, but newer than this model's training data — may not render"
+            >new</span>
+            <span
+              v-else-if="s.stage === 'live'"
+              class="rounded-full border border-line-hi px-1.5 text-2xs text-dim"
+              title="validated live against Danbooru"
+            >live</span>
             <span class="font-mono text-2xs text-faint">{{ s.count >= 1e6 ? `${(s.count / 1e6).toFixed(1)}M` : s.count >= 1e3 ? `${Math.round(s.count / 1e3)}k` : s.count }}</span>
           </ComboboxItem>
         </ComboboxViewport>
