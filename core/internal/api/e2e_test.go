@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -477,5 +478,39 @@ func TestGenerateValidation(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", name, resp.StatusCode)
 		}
+	}
+}
+
+// TestLiveSentinelVerdicts drives the full spine against a REAL running
+// sentinel with real generated images (opt-in: set SENTINEL_LIVE_URL plus
+// the two image paths). The known child-like output must reach blocked;
+// the known adult output must reach done.
+func TestLiveSentinelVerdicts(t *testing.T) {
+	url := os.Getenv("SENTINEL_LIVE_URL")
+	blockImg := os.Getenv("SENTINEL_LIVE_BLOCK_IMAGE")
+	allowImg := os.Getenv("SENTINEL_LIVE_ALLOW_IMAGE")
+	if url == "" || blockImg == "" || allowImg == "" {
+		t.Skip("SENTINEL_LIVE_URL / _BLOCK_IMAGE / _ALLOW_IMAGE not set")
+	}
+	checker := compliance.NewSentinel(url, "loli, shota, child, toddler, aged down", 0, 0)
+
+	for _, tc := range []struct {
+		name, img, want string
+	}{
+		{"child_like_blocks", blockImg, "blocked"},
+		{"adult_passes", allowImg, "done"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, "live_sentinel_"+tc.name, checker)
+			png, err := os.ReadFile(tc.img)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.fake.PNG = png
+			id := e.generate(t, `{"prompt": "1girl, standing", "seed": 1}`)
+			if v := e.waitTerminal(t, id); v.State != tc.want {
+				t.Errorf("state = %s (%s), want %s", v.State, v.Error, tc.want)
+			}
+		})
 	}
 }

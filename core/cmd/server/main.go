@@ -149,7 +149,24 @@ func main() {
 			Grounder:   &nltag.Grounder{Store: tagStore, Live: live},
 		}
 	}
-	checker := compliance.Stub{} // phase 4 replaces the impl; the call sites stay
+	// output classification (docs/compliance.md); unset SENTINEL_URL = stub
+	var checker compliance.Checker = compliance.Stub{}
+	if sentinelURL := os.Getenv("SENTINEL_URL"); sentinelURL != "" {
+		threshold, sumGate := 0.0, 0.0
+		if v := os.Getenv("SENTINEL_BLOCK_THRESHOLD"); v != "" {
+			if threshold, err = strconv.ParseFloat(v, 64); err != nil {
+				log.Fatalf("invalid SENTINEL_BLOCK_THRESHOLD: %v", err)
+			}
+		}
+		if v := os.Getenv("SENTINEL_SUM_THRESHOLD"); v != "" {
+			if sumGate, err = strconv.ParseFloat(v, 64); err != nil {
+				log.Fatalf("invalid SENTINEL_SUM_THRESHOLD: %v", err)
+			}
+		}
+		checker = compliance.NewSentinel(sentinelURL, forbiddenUC, threshold, sumGate)
+	} else {
+		log.Printf("compliance: SENTINEL_URL not set — outputs are UNCLASSIFIED; do not expose publicly (docs/compliance.md)")
+	}
 
 	// one worker per ComfyUI process: a process runs one workflow at a time
 	for i := 0; i < router.Size(); i++ {

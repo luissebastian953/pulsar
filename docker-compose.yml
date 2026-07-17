@@ -36,6 +36,16 @@ services:
 
   # core and orbit run natively during dev (make run-core / run-orbit).
   # The `full` profile is for containerized full-stack runs once Dockerfiles exist.
+  # compliance classifier — required before any public exposure
+  # (docs/compliance.md); core fails closed when it's down
+  sentinel:
+    profiles: [full]
+    build: ./sentinel
+    volumes:
+      - sentinel-models:/models
+    ports:
+      - "127.0.0.1:8189:8189"
+
   core:
     profiles: [full]
     build: ./core
@@ -45,6 +55,7 @@ services:
       QUALITY_TAGS: ${QUALITY_TAGS:-}
       DEFAULT_UC: ${DEFAULT_UC:-}
       FORBIDDEN_TAG_UC: ${FORBIDDEN_TAG_UC:-}   # required — core exits at boot if empty
+      SENTINEL_URL: ${SENTINEL_URL:-http://sentinel:8189}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
@@ -64,3 +75,4 @@ services:
 volumes:
   pgdata:
   comfy-data:
+  sentinel-models:

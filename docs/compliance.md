@@ -69,6 +69,33 @@ returned. Log it, block it, count it.
   nothing is public. The moment real users can generate, this must already run.
 - **Self-host the classifier.** It sees every image; don't ship them to a third party.
 
+## Current implementation
+
+`sentinel/` is a self-hosted WD-tagger sidecar (wd-eva02-large-tagger-v3,
+Danbooru-trained — anime-native apparent-age assessment, sha-pinned, fetched by
+`make run-sentinel`). It does pure inference; **policy lives in
+`core/internal/compliance`**:
+
+- The `FORBIDDEN_TAG_UC` list drives all three mechanisms: the negative prompt,
+  positive-prompt rejection (`CheckPrompt`), and output blocking (`CheckOutput`
+  / `CheckUpload`).
+- Two rules block an output, both env-tunable and code-clamped (never
+  disableable): any forbidden tag ≥ `SENTINEL_BLOCK_THRESHOLD` (default 0.35),
+  or the **sum** of forbidden-tag scores ≥ `SENTINEL_SUM_THRESHOLD` (default
+  0.05). The sum rule is load-bearing: Danbooru purges minor content, so the
+  tagger's age tags score faintly even on clear cases — the first real
+  child-like output scored `child 0.054 + loli 0.033 + aged_down 0.006 =
+  0.093` while clean adult images sit ≤ 0.002. Explicit-leaning images
+  (`explicit + questionable ≥ 0.5`) halve both gates: false negatives are
+  catastrophic, false positives merely annoying.
+- Sentinel unreachable → checker errors → callers block/reject (fail closed,
+  already wired in `worker` and `api`).
+- `SENTINEL_URL` unset runs the permissive stub with a loud boot warning — a
+  dev convenience that must never survive into public exposure.
+
+Accuracy tuning against real generations belongs in `eval/`; the threshold is
+a start, not a conclusion.
+
 ## Known risks
 
 1. **Classifier accuracy on anime is the highest-risk unknown in the project**, and
