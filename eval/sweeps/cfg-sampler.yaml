@@ -1,0 +1,15 @@
+# the tuning matrix (docs/tuning.md): run per lineage, compare sheets.
+# 2 prompts x 2 seeds x 3 cfg x 2 samplers = 24 generations — hours on MPS,
+# comfortable on CUDA.
+name: cfg-sampler
+prompts:
+  - "1girl, solo, silver dress, ballroom, dancing, chandelier"
+  - "1girl, solo, school uniform, cherry blossoms, wind, upper body"
+seeds: [7, 42]
+axes:
+  cfg: [5, 6, 7]
+  sampler: [euler_ancestral, dpmpp_2m]
+params:
+  steps: 26
+  scheduler: karras
+columns: 6

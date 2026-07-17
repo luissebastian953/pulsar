@@ -38,17 +38,24 @@ same image. Pick deliberately.
 
 ## The eval harness
 
-**Build this before the NoobAI swap.** Two afternoons of work in `eval/`:
+Built, in `eval/`: YAML sweep specs (prompts × seeds × CFG/sampler/steps axes)
+run through core's real API — quality tags, safety negative, and the
+compliance gate all apply — and produce a labelled contact sheet,
+`results.json`, and per-image sentinel watch-scores.
 
-- fixed set of ~20 prompts × fixed seeds
-- sweep CFG × sampler × steps
-- render contact sheets
+```bash
+make eval                      # sweeps/smoke.yaml (4 images)
+make eval SWEEP=cfg-sampler    # the tuning matrix — run per lineage
+make eval SWEEP=thresholds     # classifier calibration distribution
+CORE_URL=http://localhost:8081 ./eval/run.sh eval/sweeps/smoke.yaml
+```
 
-It converts every future tuning question from argument into measurement. You'll need
-it the moment you swap lineages, because none of the settings carry over.
-
-It's also how you tune `min_post_count` (see `docs/tagdb.md`) — the highest-leverage
-accuracy knob, and one you cannot tune by intuition.
+It converts every future tuning question from argument into measurement:
+lineage swaps (none of the settings carry over), `min_post_count`
+(docs/tagdb.md — the highest-leverage accuracy knob), and
+`SENTINEL_SUM_THRESHOLD` (docs/compliance.md — grow `sweeps/thresholds.yaml`
+before trusting the gate for launch). Blocked and rejected cells render in
+the sheet; they're data, not failures.
 
 ## Quality passes
 

@@ -23,8 +23,8 @@ seed-tags: ## Danbooru -> tag DB (slow, idempotent; MIN_POST_COUNT=50 to tune fl
 fetch-models: ## download pinned model weights into comfy/models (~7 GB, resumable, sha256-verified)
 	./comfy/fetch-models.sh
 
-eval: ## tuning harness: prompt/seed sweeps -> contact sheets
-	@echo "eval: not implemented yet (build before the NoobAI swap — see docs/tuning.md)"; exit 1
+eval: ## sweep -> contact sheet + classifier stats (SWEEP=smoke|cfg-sampler|thresholds)
+	./eval/run.sh eval/sweeps/$${SWEEP:-smoke}.yaml
 
 test: ## core suite; set PULSAR_TEST_DATABASE_URL to include integration + e2e
 	cd core && go vet ./... && go test ./...

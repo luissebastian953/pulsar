@@ -1,0 +1,9 @@
+# smallest useful sweep: proves the harness end-to-end (~15 min on MPS)
+name: smoke
+prompts:
+  - "1girl, solo, office lady, pencil skirt, standing, city street"
+  - "1boy, solo, knight, full armor, sword, castle interior"
+seeds: [7, 42]
+params:
+  steps: 24
+columns: 4

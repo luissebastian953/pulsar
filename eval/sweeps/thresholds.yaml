@@ -1,0 +1,17 @@
+# classifier calibration: varied neutral prompts, watch-sum distribution
+# feeds SENTINEL_SUM_THRESHOLD tuning (docs/compliance.md). Grow this set
+# before trusting the gate for launch.
+name: thresholds
+prompts:
+  - "1girl, solo, standing, full body, simple background"
+  - "1girl, solo, sitting, classroom, school uniform"
+  - "1boy, solo, running, sportswear, track"
+  - "1girl, solo, swimsuit, beach, full body"
+  - "1girl, solo, kimono, shrine, new year"
+  - "2girls, walking, shopping street, casual clothes"
+  - "1girl, solo, gym uniform, stretching, full body"
+  - "1boy, solo, child, playground"   # prompt-gate control: rejected at submission, never generated
+seeds: [3, 11]
+params:
+  steps: 24
+columns: 4
