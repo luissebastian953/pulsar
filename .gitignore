@@ -31,6 +31,7 @@ eval/out/
 
 # model weights & generated images — never in git
 comfy/models/
+sentinel/models/
 data/
 
 # comfy native-run state (run-native.sh)

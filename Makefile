@@ -2,7 +2,7 @@ COMPOSE ?= docker compose
 PROFILE := $(if $(GPU),--profile gpu)
 
 .DEFAULT_GOAL := help
-.PHONY: help dev down migrate seed-tags fetch-models eval test run-core run-orbit run-comfy psql hooks
+.PHONY: help dev down migrate seed-tags fetch-models eval test run-core run-orbit run-comfy run-sentinel psql hooks
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n", $$1, $$2}'
@@ -37,6 +37,9 @@ run-orbit: ## run the Nuxt dev server natively
 
 run-comfy: ## run ComfyUI natively (MPS on Apple Silicon; the docker gpu profile is the deploy path)
 	./comfy/run-native.sh
+
+run-sentinel: ## run the compliance classifier sidecar (fetches the pinned model on first run)
+	./sentinel/run.sh
 
 hooks: ## enable the repo's git hooks (conventional-commit check; needs commitizen)
 	git config core.hooksPath .githooks
