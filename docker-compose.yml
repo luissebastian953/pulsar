@@ -42,6 +42,9 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-pulsar}:${POSTGRES_PASSWORD:-pulsar}@postgres:5432/${POSTGRES_DB:-pulsar}?sslmode=disable
       COMFY_URL: ${COMFY_URL:-http://comfy:8188}
+      QUALITY_TAGS: ${QUALITY_TAGS:-}
+      DEFAULT_UC: ${DEFAULT_UC:-}
+      FORBIDDEN_TAG_UC: ${FORBIDDEN_TAG_UC:-}   # required — core exits at boot if empty
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

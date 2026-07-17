@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"pulsar/core/internal/assembly"
@@ -24,6 +26,10 @@ import (
 type Config struct {
 	Lineage    string
 	Checkpoint string
+	// prompt config from env; ForbiddenTagUC is required (see assembly.Options)
+	QualityTags    string
+	DefaultUC      string
+	ForbiddenTagUC string
 	// CORSOrigins is the allowed cross-origin list; "*" allows any. Empty
 	// disables CORS entirely (same-origin only).
 	CORSOrigins []string
@@ -35,9 +41,13 @@ type Server struct {
 	Checker compliance.Checker
 	Blobs   blob.Store
 	Tags    *tags.Store
+	// Live is the Danbooru live validator; nil degrades /tags/lookup to
+	// DB-only resolution.
+	Live *tags.Live
 	// Translator is nil when no LLM is configured; POST /translate then 503s.
 	Translator *nltag.Translator
 	Tpl        workflow.Graph // txt2img base, hash-verified at load
+	PoseTpl    workflow.Graph // pose base (spine + extraction), hash-verified at load
 	Cfg        Config
 }
 
@@ -48,6 +58,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /jobs/{id}/stream", s.handleStream)
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
 	mux.HandleFunc("GET /tags", s.handleTags)
+	mux.HandleFunc("GET /tags/lookup", s.handleTagLookup)
 	mux.HandleFunc("POST /translate", s.handleTranslate)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
@@ -59,14 +70,29 @@ func (s *Server) Handler() http.Handler {
 
 var jobIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
+// job id plus optional role suffix (…-lineart, …-skeleton)
+var imageIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z]{1,16})?$`)
+
 // POST /generate: validate → CheckPrompt → assemble → build workflow →
 // enqueue → 202. Generation is 20–40s; it never blocks this handler.
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
-	var req assembly.Request
+	var req struct {
+		assembly.Request
+		// Kind selects the workflow: "txt2img" (default) or "pose" —
+		// same spine, pose appends lineart + skeleton extraction.
+		Kind string `json:"kind"`
+	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		httpError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.Kind == "" {
+		req.Kind = "txt2img"
+	}
+	if _, ok := workflow.OutputRoles(req.Kind); !ok {
+		httpError(w, http.StatusBadRequest, "unknown kind "+strconv.Quote(req.Kind))
 		return
 	}
 
@@ -82,7 +108,10 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		seed = int64(binary.BigEndian.Uint64(b[:]) >> 1) // non-negative
 	}
 
-	spec, err := assembly.Build(req, assembly.Options{Lineage: s.Cfg.Lineage, Seed: seed})
+	spec, err := assembly.Build(req.Request, assembly.Options{
+		Lineage: s.Cfg.Lineage, Seed: seed,
+		QualityTags: s.Cfg.QualityTags, DefaultUC: s.Cfg.DefaultUC, ForbiddenTagUC: s.Cfg.ForbiddenTagUC,
+	})
 	if err != nil {
 		httpError(w, http.StatusBadRequest, err.Error())
 		return
@@ -99,7 +128,12 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	graph, err := workflow.BuildTxt2Img(s.Tpl, spec, s.Cfg.Checkpoint)
+	var graph json.RawMessage
+	if req.Kind == "pose" {
+		graph, err = workflow.BuildPose(s.PoseTpl, spec, s.Cfg.Checkpoint)
+	} else {
+		graph, err = workflow.BuildTxt2Img(s.Tpl, spec, s.Cfg.Checkpoint)
+	}
 	if err != nil {
 		log.Printf("api: build workflow: %v", err)
 		httpError(w, http.StatusInternalServerError, "workflow build failed")
@@ -111,7 +145,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "params marshal failed")
 		return
 	}
-	j, err := s.Store.Enqueue(r.Context(), "txt2img", params, graph)
+	j, err := s.Store.Enqueue(r.Context(), req.Kind, params, graph)
 	if err != nil {
 		log.Printf("api: enqueue: %v", err)
 		httpError(w, http.StatusInternalServerError, "enqueue failed")
@@ -121,14 +155,16 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 }
 
 type jobPayload struct {
-	ID            string          `json:"id"`
-	Kind          string          `json:"kind"`
-	State         job.State       `json:"state"`
-	Params        json.RawMessage `json:"params"`
-	ImageURL      string          `json:"image_url,omitempty"`
-	Error         string          `json:"error,omitempty"`
-	QueuePosition int             `json:"queue_position,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
+	ID       string          `json:"id"`
+	Kind     string          `json:"kind"`
+	State    job.State       `json:"state"`
+	Params   json.RawMessage `json:"params"`
+	ImageURL string          `json:"image_url,omitempty"`
+	// per-role URLs for multi-output kinds; image_url stays the primary
+	Images        map[string]string `json:"images,omitempty"`
+	Error         string            `json:"error,omitempty"`
+	QueuePosition int               `json:"queue_position,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
 }
 
 func (s *Server) payload(r *http.Request, j *job.Job) jobPayload {
@@ -138,6 +174,16 @@ func (s *Server) payload(r *http.Request, j *job.Job) jobPayload {
 	}
 	if j.State == job.StateDone && j.ImagePath != "" {
 		p.ImageURL = "/images/" + j.ID
+		if roles, ok := workflow.OutputRoles(j.Kind); ok && len(roles) > 1 {
+			p.Images = make(map[string]string, len(roles))
+			for role := range roles {
+				if role == "" {
+					p.Images["source"] = "/images/" + j.ID
+				} else {
+					p.Images[role] = "/images/" + j.ID + "-" + role
+				}
+			}
+		}
 	}
 	if j.State == job.StateQueued {
 		if pos, err := s.Store.QueuePosition(r.Context(), j.ID); err == nil {
@@ -176,7 +222,7 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !jobIDPattern.MatchString(id) {
+	if !imageIDPattern.MatchString(id) {
 		httpError(w, http.StatusNotFound, "no such image")
 		return
 	}
@@ -209,10 +255,67 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "autocomplete failed")
 		return
 	}
-	if suggestions == nil {
-		suggestions = []tags.Suggestion{}
+	out := make([]tagView, 0, len(suggestions))
+	for _, sg := range suggestions {
+		out = append(out, tagView{
+			Canonical: sg.Canonical, Category: sg.Category, Count: sg.Count,
+			NewerThanModel: s.newerThanModel(sg.CreatedAt),
+		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tags": suggestions})
+	writeJSON(w, http.StatusOK, map[string]any{"tags": out})
+}
+
+// tagView is the wire shape for suggestions and lookups; NewerThanModel
+// flags tags the active lineage never saw (docs/tagdb.md).
+type tagView struct {
+	Canonical      string `json:"canonical"`
+	Category       string `json:"category"`
+	Count          int    `json:"count"`
+	Stage          string `json:"stage,omitempty"`
+	NewerThanModel bool   `json:"newer_than_model,omitempty"`
+}
+
+func (s *Server) newerThanModel(createdAt *time.Time) bool {
+	if createdAt == nil {
+		return false
+	}
+	cutoff, ok := assembly.KnowledgeCutoff(s.Cfg.Lineage)
+	return ok && createdAt.After(cutoff)
+}
+
+// GET /tags/lookup?name=X — live validator: DB first, Danbooru on miss
+// (.claude/skills/tag-grounding).
+func (s *Server) handleTagLookup(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if strings.TrimSpace(name) == "" {
+		httpError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	var (
+		res *tags.Resolution
+		err error
+	)
+	if s.Live != nil {
+		res, err = s.Live.Validate(r.Context(), name)
+	} else {
+		res, err = s.Tags.Resolve(r.Context(), name, false)
+	}
+	if err != nil {
+		log.Printf("api: tag lookup %q: %v", name, err)
+		httpError(w, http.StatusBadGateway, "lookup failed")
+		return
+	}
+	if res == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"found": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"found": true,
+		"tag": tagView{
+			Canonical: res.Canonical, Category: res.Category, Count: res.Count,
+			Stage: res.Stage, NewerThanModel: s.newerThanModel(res.CreatedAt),
+		},
+	})
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {

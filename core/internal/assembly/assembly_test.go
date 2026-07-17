@@ -6,7 +6,18 @@ import (
 	"testing"
 )
 
-func opts() Options { return Options{Lineage: "illustrious", Seed: 42} }
+// testUC / testForbidden stand in for the DEFAULT_UC / FORBIDDEN_TAG_UC env
+// values — negative prompts are deployment config, not code, so tests
+// supply their own.
+const (
+	testQuality   = "masterpiece, best quality"
+	testUC        = "lowres, bad hands, watermark"
+	testForbidden = "loli, shota, child"
+)
+
+func opts() Options {
+	return Options{Lineage: "illustrious", Seed: 42, QualityTags: testQuality, DefaultUC: testUC, ForbiddenTagUC: testForbidden}
+}
 
 func boolPtr(b bool) *bool { return &b }
 
@@ -16,8 +27,8 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Spec{
-		Prompt:   "masterpiece, best quality, very aesthetic, absurdres, 1girl, silver hair",
-		Negative: defaultUC,
+		Prompt:   testQuality + ", 1girl, silver hair",
+		Negative: testForbidden + ", " + testUC,
 		Width:    832, Height: 1216,
 		Steps: 24, CFG: 6.0,
 		Sampler: "euler_ancestral", Scheduler: "normal",
@@ -50,15 +61,13 @@ func TestQualityTagsToggle(t *testing.T) {
 	}
 }
 
-func TestQualityTagsAreLineageSpecific(t *testing.T) {
-	s, err := Build(Request{Prompt: "1girl"}, Options{Lineage: "noobai", Seed: 1})
-	if err != nil {
-		t.Fatal(err)
+func TestLineageValidation(t *testing.T) {
+	// quality tags are env config now, but the lineage whitelist is not:
+	// an unknown lineage is refused, never guessed
+	if _, err := Build(Request{Prompt: "1girl"}, Options{Lineage: "noobai", Seed: 1, ForbiddenTagUC: testForbidden}); err != nil {
+		t.Errorf("noobai must be a valid lineage: %v", err)
 	}
-	if !strings.Contains(s.Prompt, "very awa") {
-		t.Errorf("noobai lineage missing 'very awa': %q", s.Prompt)
-	}
-	if _, err := Build(Request{Prompt: "1girl"}, Options{Lineage: "pony", Seed: 1}); err == nil {
+	if _, err := Build(Request{Prompt: "1girl"}, Options{Lineage: "pony", Seed: 1, ForbiddenTagUC: testForbidden}); err == nil {
 		t.Error("unknown lineage must be rejected, not guessed")
 	}
 }
@@ -68,7 +77,7 @@ func TestNegativeHandling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Negative != defaultUC+", extra fingers" {
+	if s.Negative != testForbidden+", "+testUC+", extra fingers" {
 		t.Errorf("negative = %q", s.Negative)
 	}
 
@@ -76,13 +85,63 @@ func TestNegativeHandling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Negative != "extra fingers" {
-		t.Errorf("uc_preset=false should pass negative through, got %q", s.Negative)
+	if s.Negative != testForbidden+", extra fingers" {
+		t.Errorf("uc_preset=false should drop the UC preset but never the safety terms, got %q", s.Negative)
+	}
+}
+
+// TestForbiddenTagUCIsUnconditional pins the child-safety non-negotiable
+// (CLAUDE.md): the forbidden-tag value lives in env, its PRESENCE is
+// enforced here. Build must refuse an empty ForbiddenTagUC outright, and
+// when set, no request shape may produce a negative without the terms in
+// first position (never truncated out of the first CLIP chunk).
+func TestForbiddenTagUCIsUnconditional(t *testing.T) {
+	// fail closed: no safety terms, no Spec — under every request shape
+	for _, o := range []Options{
+		{Lineage: "illustrious", Seed: 1},
+		{Lineage: "illustrious", Seed: 1, ForbiddenTagUC: "   "},
+		{Lineage: "illustrious", Seed: 1, DefaultUC: testUC},
+	} {
+		if _, err := Build(Request{Prompt: "1girl"}, o); err == nil {
+			t.Errorf("opts %+v: empty ForbiddenTagUC must refuse to build", o)
+		}
+	}
+
+	for _, o := range []Options{
+		opts(),
+		{Lineage: "illustrious", Seed: 1, ForbiddenTagUC: testForbidden, DefaultUC: "blurry"},
+		{Lineage: "illustrious", Seed: 1, ForbiddenTagUC: testForbidden},
+	} {
+		for _, req := range []Request{
+			{Prompt: "1girl"},
+			{Prompt: "1girl", UCPreset: boolPtr(false)},
+			{Prompt: "1girl", UCPreset: boolPtr(false), Negative: ""},
+			{Prompt: "1girl", Negative: "blurry"},
+		} {
+			s, err := Build(req, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(s.Negative, testForbidden) {
+				t.Errorf("request %+v opts %+v: negative %q lost the safety terms", req, o, s.Negative)
+			}
+		}
+	}
+}
+
+func TestNegativeConfig(t *testing.T) {
+	// no DEFAULT_UC configured → no preset, safety terms alone remain
+	s, err := Build(Request{Prompt: "1girl"}, Options{Lineage: "illustrious", Seed: 1, ForbiddenTagUC: testForbidden})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Negative != testForbidden {
+		t.Errorf("unset DefaultUC: %q", s.Negative)
 	}
 }
 
 func TestSeedPassthrough(t *testing.T) {
-	s, err := Build(Request{Prompt: "1girl"}, Options{Lineage: "illustrious", Seed: 123456789})
+	s, err := Build(Request{Prompt: "1girl"}, Options{Lineage: "illustrious", Seed: 123456789, ForbiddenTagUC: testForbidden})
 	if err != nil {
 		t.Fatal(err)
 	}

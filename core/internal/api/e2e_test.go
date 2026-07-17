@@ -60,6 +60,10 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	poseTpl, err := workflow.Load("../../../workflows", workflow.TplPose, workflow.PoseSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	broker := job.NewBroker()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -72,8 +76,12 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl,
-		Cfg: api.Config{Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors"},
+		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl,
+		Cfg: api.Config{
+			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
+			QualityTags:    "masterpiece, best quality",
+			ForbiddenTagUC: "loli, shota, child", // required: Build refuses without it
+		},
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -101,11 +109,12 @@ func (e *env) generate(t *testing.T, body string) string {
 }
 
 type jobView struct {
-	ID       string          `json:"id"`
-	State    string          `json:"state"`
-	Params   json.RawMessage `json:"params"`
-	ImageURL string          `json:"image_url"`
-	Error    string          `json:"error"`
+	ID       string            `json:"id"`
+	State    string            `json:"state"`
+	Params   json.RawMessage   `json:"params"`
+	ImageURL string            `json:"image_url"`
+	Images   map[string]string `json:"images"`
+	Error    string            `json:"error"`
 }
 
 func (e *env) waitTerminal(t *testing.T, id string) jobView {
@@ -191,6 +200,60 @@ func TestEndToEndDone(t *testing.T) {
 	}
 	if strings.TrimSpace(line) != "event: done" {
 		t.Errorf("first SSE line = %q, want event: done", line)
+	}
+}
+
+// TestEndToEndPose drives the pose kind: one generation, three delivered
+// images (source + extracted lineart + skeleton), each stored under its own
+// blob and each traceable to the right SaveImage node.
+func TestEndToEndPose(t *testing.T) {
+	e := newEnv(t, "e2e_pose", compliance.Stub{})
+	e.fake.TagOutputs = true
+	id := e.generate(t, `{"prompt": "1girl, standing", "seed": 7, "kind": "pose"}`)
+
+	v := e.waitTerminal(t, id)
+	if v.State != "done" {
+		t.Fatalf("state = %s (%s), want done", v.State, v.Error)
+	}
+	if v.ImageURL != "/images/"+id {
+		t.Errorf("image_url = %q", v.ImageURL)
+	}
+
+	// every role delivered, each from its own SaveImage node
+	wantNode := map[string]string{
+		"source":   workflow.Pose.SaveSource,
+		"lineart":  workflow.Pose.SaveLineart,
+		"skeleton": workflow.Pose.SaveSkeleton,
+	}
+	if len(v.Images) != len(wantNode) {
+		t.Fatalf("images = %v", v.Images)
+	}
+	for role, node := range wantNode {
+		url, ok := v.Images[role]
+		if !ok {
+			t.Fatalf("role %s missing from images: %v", role, v.Images)
+		}
+		resp, err := http.Get(e.ts.URL + url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s = %d", url, resp.StatusCode)
+		}
+		if !bytes.HasSuffix(img, []byte("node-"+node+".png")) {
+			t.Errorf("role %s did not come from node %s", role, node)
+		}
+	}
+
+	// the extractors were patched to the render's short side
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g[workflow.Pose.Lineart].Inputs["resolution"]; got != float64(832) {
+		t.Errorf("lineart resolution = %v, want 832", got)
 	}
 }
 

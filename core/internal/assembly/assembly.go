@@ -1,11 +1,11 @@
-// Package assembly turns a generation request into a resolved Spec.
-// It is pure: no I/O, no network, no GPU. Anything nondeterministic (the seed)
-// is resolved by the caller and passed in via Options.
+// Package assembly: request → resolved Spec. Pure — no I/O, no network,
+// no GPU (.claude/skills/core-job).
 package assembly
 
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Request is the raw API input. Prompt and Negative are comma-separated
@@ -43,6 +43,14 @@ type Spec struct {
 type Options struct {
 	Lineage string // quality tags are lineage-specific (docs/tagdb.md)
 	Seed    int64
+	// QualityTags is the QUALITY_TAGS preset for this lineage; empty = none.
+	QualityTags string
+	// DefaultUC is the deployment's quality UC preset (env DEFAULT_UC,
+	// shipped in .env.example). Empty = no preset.
+	DefaultUC string
+	// ForbiddenTagUC (env FORBIDDEN_TAG_UC) is required — Build refuses
+	// empty (CLAUDE.md non-negotiables).
+	ForbiddenTagUC string
 }
 
 // SDXL only behaves on-bucket (docs/tuning.md#resolution-buckets).
@@ -62,12 +70,20 @@ var samplers = map[string]bool{
 
 var schedulers = map[string]bool{"normal": true, "karras": true}
 
-var qualityTags = map[string][]string{
-	"illustrious": {"masterpiece", "best quality", "very aesthetic", "absurdres"},
-	"noobai":      {"masterpiece", "best quality", "very aesthetic", "absurdres", "very awa"},
+// unknown lineages are refused, never guessed (docs/tagdb.md)
+var lineages = map[string]bool{"illustrious": true, "noobai": true}
+
+// approximate end of each lineage's training data; advisory (docs/tagdb.md)
+var knowledgeCutoff = map[string]time.Time{
+	"illustrious": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),   // Danbooru2023 dump
+	"noobai":      time.Date(2024, 10, 23, 0, 0, 0, 0, time.UTC), // Danbooru through 2024-10-23
 }
 
-const defaultUC = "lowres, worst quality, bad quality, bad anatomy, bad hands, jpeg artifacts, signature, watermark"
+// KnowledgeCutoff reports when a lineage's training data ends.
+func KnowledgeCutoff(lineage string) (time.Time, bool) {
+	t, ok := knowledgeCutoff[lineage]
+	return t, ok
+}
 
 const (
 	defaultWidth  = 832
@@ -86,11 +102,13 @@ func Build(req Request, opts Options) (Spec, error) {
 	if opts.Seed < 0 {
 		return Spec{}, fmt.Errorf("seed must be non-negative")
 	}
+	safety := strings.TrimSpace(opts.ForbiddenTagUC)
+	if safety == "" {
+		// fail closed (CLAUDE.md non-negotiables)
+		return Spec{}, fmt.Errorf("forbidden-tag negative is not configured (FORBIDDEN_TAG_UC)")
+	}
 
-	quality, ok := qualityTags[opts.Lineage]
-	if !ok {
-		// wrong-family quality tags are a silent accuracy killer — refuse
-		// rather than guess (docs/tagdb.md#quality-tags-are-lineage-specific)
+	if !lineages[opts.Lineage] {
 		return Spec{}, fmt.Errorf("unknown lineage %q", opts.Lineage)
 	}
 
@@ -136,20 +154,25 @@ func Build(req Request, opts Options) (Spec, error) {
 		return Spec{}, fmt.Errorf("unknown scheduler %q", s.Scheduler)
 	}
 
-	if req.QualityTags == nil || *req.QualityTags {
-		s.Prompt = strings.Join(quality, ", ") + ", " + prompt
+	if quality := strings.TrimSpace(opts.QualityTags); quality != "" && (req.QualityTags == nil || *req.QualityTags) {
+		s.Prompt = quality + ", " + prompt
 	} else {
 		s.Prompt = prompt
 	}
 
 	negative := strings.TrimSpace(req.Negative)
-	if req.UCPreset == nil || *req.UCPreset {
-		s.Negative = defaultUC
+	if uc := strings.TrimSpace(opts.DefaultUC); uc != "" && (req.UCPreset == nil || *req.UCPreset) {
+		s.Negative = uc
 		if negative != "" {
 			s.Negative += ", " + negative
 		}
 	} else {
 		s.Negative = negative
+	}
+	if s.Negative == "" {
+		s.Negative = safety
+	} else {
+		s.Negative = safety + ", " + s.Negative
 	}
 
 	return s, nil

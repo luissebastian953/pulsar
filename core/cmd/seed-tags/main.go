@@ -1,6 +1,4 @@
-// seed-tags ingests the Danbooru tag vocabulary into the tag DB.
-// Slow (a few minutes), idempotent, run once — then re-run occasionally to
-// refresh counts. See docs/tagdb.md#ingest.
+// seed-tags: Danbooru vocabulary → tag DB (docs/tagdb.md#ingest).
 package main
 
 import (
@@ -14,10 +12,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"pulsar/core/internal/dotenv"
 	"pulsar/core/internal/tags"
 )
 
 func main() {
+	dotenv.Load() // native runs read the repo .env; real env always wins
 	defaultFloor := 50
 	if v := os.Getenv("MIN_POST_COUNT"); v != "" {
 		n, err := strconv.Atoi(v)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"pulsar/core/internal/blob"
 	"pulsar/core/internal/comfy"
 	"pulsar/core/internal/compliance"
+	"pulsar/core/internal/dotenv"
 	"pulsar/core/internal/job"
 	"pulsar/core/internal/nltag"
 	"pulsar/core/internal/tags"
@@ -41,6 +43,7 @@ func splitNonEmpty(s string) []string {
 }
 
 func main() {
+	dotenv.Load() // native runs read the repo .env; real env always wins
 	var (
 		port         = envOr("PORT", "8080")
 		databaseURL  = envOr("DATABASE_URL", "postgres://pulsar:pulsar@localhost:5432/pulsar?sslmode=disable")
@@ -51,7 +54,14 @@ func main() {
 		lineage      = envOr("LINEAGE", "illustrious")
 		execTimeout  = envOr("EXEC_TIMEOUT", "5m")
 		corsOrigins  = envOr("CORS_ORIGINS", "*") // comma-separated; empty disables
+		forbiddenUC  = strings.TrimSpace(os.Getenv("FORBIDDEN_TAG_UC"))
 	)
+
+	// fail closed — a deployment without the forbidden-tag negative does
+	// not run (CLAUDE.md non-negotiables)
+	if forbiddenUC == "" {
+		log.Fatalf("FORBIDDEN_TAG_UC must be set and non-empty — copy the value from .env.example; see docs/compliance.md")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -63,6 +73,10 @@ func main() {
 
 	// fail fast on a drifted template before accepting any work
 	tpl, err := workflow.Load(workflowsDir, workflow.TplTxt2Img, workflow.Txt2ImgSHA256)
+	if err != nil {
+		log.Fatalf("load workflow template: %v", err)
+	}
+	poseTpl, err := workflow.Load(workflowsDir, workflow.TplPose, workflow.PoseSHA256)
 	if err != nil {
 		log.Fatalf("load workflow template: %v", err)
 	}
@@ -118,11 +132,21 @@ func main() {
 	default:
 		log.Fatalf("invalid TRANSLATE_PROVIDER %q (want claude or deepseek)", provider)
 	}
+	// live tag validation on DB misses; empty DANBOORU_URL disables
+	var live *tags.Live
+	if danbooruURL := envOr("DANBOORU_URL", "https://danbooru.donmai.us"); danbooruURL != "" {
+		floor, err := strconv.Atoi(envOr("MIN_POST_COUNT", "50"))
+		if err != nil {
+			log.Fatalf("invalid MIN_POST_COUNT: %v", err)
+		}
+		live = tags.NewLive(pool, danbooruURL, floor)
+	}
+
 	var translator *nltag.Translator
 	if decomposer != nil {
 		translator = &nltag.Translator{
 			Decomposer: decomposer,
-			Grounder:   &nltag.Grounder{Store: tagStore},
+			Grounder:   &nltag.Grounder{Store: tagStore, Live: live},
 		}
 	}
 	checker := compliance.Stub{} // phase 4 replaces the impl; the call sites stay
@@ -140,10 +164,13 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tags: tagStore, Translator: translator, Tpl: tpl,
+			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl,
 			Cfg: api.Config{
 				Lineage: lineage, Checkpoint: checkpoint,
-				CORSOrigins: splitNonEmpty(corsOrigins),
+				CORSOrigins:    splitNonEmpty(corsOrigins),
+				QualityTags:    os.Getenv("QUALITY_TAGS"),
+				DefaultUC:      os.Getenv("DEFAULT_UC"),
+				ForbiddenTagUC: forbiddenUC,
 			},
 		}).Handler(),
 	}
