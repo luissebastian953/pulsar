@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { GenerationRequest, JobPayload, TranslatedTag } from '~/types/api'
+import type { GenerationRequest, JobPayload, UploadResult, TranslatedTag } from '~/types/api'
 import type { RecentItem } from '~/components/RecentStrip.vue'
 
 const api = useApi()
@@ -22,12 +22,36 @@ const qualityTags = ref(true)
 const faceDetail = ref(true)
 const hires = ref(false)
 
-const folds = reactive({ und: false, chars: false, ref: false, adv: false })
+const folds = reactive({ und: false, chars: false, ref: false, i2i: false, adv: false })
 
 // pose → create handoff ("Use this pose")
 const poseRef = useState<{ seed: string, label: string } | null>('poseRef', () => null)
 const openRefFold = useState('openRefFold', () => false)
 const refStrength = ref(0.6)
+
+// image-to-image: pick → upload once → generate with kind img2img
+const i2iFile = ref<File | null>(null)
+const i2iPreview = ref('')
+const i2iId = ref('')
+const i2iStrength = ref(0.6)
+const i2iError = ref('')
+
+function onI2iPick(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  i2iFile.value = file
+  i2iPreview.value = URL.createObjectURL(file)
+  i2iId.value = ''
+  i2iError.value = ''
+}
+
+function clearI2i() {
+  if (i2iPreview.value) URL.revokeObjectURL(i2iPreview.value)
+  i2iFile.value = null
+  i2iPreview.value = ''
+  i2iId.value = ''
+  i2iError.value = ''
+}
 if (openRefFold.value) {
   folds.ref = true
   openRefFold.value = false
@@ -92,8 +116,21 @@ const promptText = computed(() => {
 
 const cost = computed(() => batch.value * (17 + (hires.value ? 8 : 0)))
 
-function generate() {
+async function generate() {
   if (job.busy.value || !promptText.value) return
+  i2iError.value = ''
+  if (i2iFile.value && !i2iId.value) {
+    try {
+      const up = await api.upload<UploadResult>('/uploads', i2iFile.value)
+      i2iId.value = up.image_id
+    }
+    catch (e: unknown) {
+      const err = e as { data?: { error?: string } }
+      i2iError.value = err.data?.error || 'upload failed'
+      folds.i2i = true
+      return
+    }
+  }
   const [width, height] = dims.value
   const req: GenerationRequest = {
     prompt: promptText.value,
@@ -105,6 +142,11 @@ function generate() {
     sampler: sampler.value,
     scheduler: scheduler.value,
     quality_tags: qualityTags.value,
+  }
+  if (i2iId.value) {
+    req.kind = 'img2img'
+    req.image_id = i2iId.value
+    req.denoise = i2iStrength.value
   }
   const s = seedText.value.trim()
   if (/^\d+$/.test(s)) req.seed = Number(s)
@@ -232,6 +274,36 @@ const charBadge = computed(() =>
                 <Icon name="lucide:plus" :size="13" />Character reference
               </span>
             </button>
+          </div>
+        </Fold>
+
+        <Fold v-model="folds.i2i" label="Image to image" :badge="i2iFile ? 'on' : 'off'">
+          <div class="grid gap-2.5">
+            <template v-if="i2iFile">
+              <div class="flex items-center gap-2.5 rounded-ctrl border border-line bg-void p-2">
+                <img :src="i2iPreview" alt="input" class="size-14 flex-none rounded-lg object-cover">
+                <div class="min-w-0 flex-1">
+                  <div class="truncate text-[12px] text-dim">{{ i2iFile.name }}</div>
+                  <div class="font-mono text-[10.5px] text-faint">fitted to the nearest bucket on upload</div>
+                </div>
+                <button class="focus-ring cursor-pointer text-faint hover:text-t-artist" aria-label="remove image" @click="clearI2i">
+                  <Icon name="lucide:x" :size="14" />
+                </button>
+              </div>
+              <SliderRow v-model="i2iStrength" label="Strength" :min="0.05" :max="0.95" :step="0.05" :decimals="2" />
+              <div class="text-[10.5px] leading-relaxed text-faint">
+                higher = more change; ~0.6 restructures while keeping composition
+              </div>
+            </template>
+            <label
+              v-else
+              class="focus-ring flex cursor-pointer items-center justify-center gap-2 rounded-ctrl border border-dashed border-line px-3 py-4 text-[12px] text-dim hover:border-line-hi"
+            >
+              <Icon name="lucide:image-plus" :size="14" />
+              choose an image (png / jpeg)
+              <input type="file" accept="image/png,image/jpeg" class="hidden" @change="onI2iPick">
+            </label>
+            <div v-if="i2iError" class="text-[11px] text-warn">{{ i2iError }}</div>
           </div>
         </Fold>
 
