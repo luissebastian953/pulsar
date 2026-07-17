@@ -11,6 +11,9 @@ const (
 
 	TplImg2Img    = "img2img.json"
 	Img2ImgSHA256 = "sha256:b8dfd8604a5b21bbc6e126ee1fc7be74444be7c670028b3a0ba5cb11e138ee41"
+
+	TplInpaint    = "inpaint.json"
+	InpaintSHA256 = "sha256:e1323578c44df103a93f5f9fdde55143fa8498ada345584007399a499d93c3d7"
 )
 
 var Txt2Img = struct {
@@ -84,6 +87,28 @@ var Img2Img = struct {
 	Encode:     "9",
 }
 
+// Inpaint = img2img + a mask: white repaints, black keeps
+// (.claude/skills/comfy-workflow).
+var Inpaint = struct {
+	Checkpoint string
+	Positive   string
+	Negative   string
+	Sampler    string
+	Save       string
+	LoadImage  string
+	LoadMask   string
+	NoiseMask  string
+}{
+	Checkpoint: "1",
+	Positive:   "2",
+	Negative:   "3",
+	Sampler:    "5",
+	Save:       "7",
+	LoadImage:  "8",
+	LoadMask:   "10",
+	NoiseMask:  "12",
+}
+
 // OutputRoles: kind → role → SaveImage node; role "" is the primary
 // (.claude/skills/core-job).
 func OutputRoles(kind string) (map[string]string, bool) {
@@ -92,6 +117,8 @@ func OutputRoles(kind string) (map[string]string, bool) {
 		return map[string]string{"": Txt2Img.Save}, true
 	case "img2img":
 		return map[string]string{"": Img2Img.Save}, true
+	case "inpaint":
+		return map[string]string{"": Inpaint.Save}, true
 	case "pose":
 		return map[string]string{
 			"":         Pose.SaveSource,

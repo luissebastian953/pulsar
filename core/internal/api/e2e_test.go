@@ -72,6 +72,10 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	inpTpl, err := workflow.Load("../../../workflows", workflow.TplInpaint, workflow.InpaintSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	broker := job.NewBroker()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -84,7 +88,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl,
+		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl,
 		Cfg: api.Config{
 			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
 			QualityTags:    "masterpiece, best quality",
@@ -335,6 +339,77 @@ func TestEndToEndImg2Img(t *testing.T) {
 	json.Unmarshal(v.Params, &spec)
 	if spec.Denoise != 0.6 {
 		t.Errorf("stored denoise = %v", spec.Denoise)
+	}
+}
+
+// uploadPNG posts a wxh image through /uploads and returns its id.
+func (e *env) uploadPNG(t *testing.T, w, h int) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
+		t.Fatal(err)
+	}
+	var form bytes.Buffer
+	mw := multipart.NewWriter(&form)
+	fw, _ := mw.CreateFormFile("image", "in.png")
+	fw.Write(buf.Bytes())
+	mw.Close()
+	resp, err := http.Post(e.ts.URL+"/uploads", mw.FormDataContentType(), &form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var up struct {
+		ImageID string `json:"image_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&up); err != nil || up.ImageID == "" {
+		t.Fatalf("upload failed: %d %v", resp.StatusCode, err)
+	}
+	return up.ImageID
+}
+
+func TestEndToEndInpaint(t *testing.T) {
+	e := newEnv(t, "e2e_inpaint", compliance.Stub{})
+	img := e.uploadPNG(t, 100, 150)  // → 832x1216
+	mask := e.uploadPNG(t, 200, 300) // same aspect → same bucket
+
+	id := e.generate(t, `{"prompt": "1girl, blonde hair", "seed": 9, "kind": "inpaint", "image_id": "`+img+`", "mask_id": "`+mask+`"}`)
+	v := e.waitTerminal(t, id)
+	if v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+
+	// both files forwarded to the executing process
+	for _, name := range []string{img + ".png", mask + ".png"} {
+		if _, ok := e.fake.Upload(name); !ok {
+			t.Errorf("%s was not forwarded", name)
+		}
+	}
+	// graph: both LoadImages patched, inpaint default denoise
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g[workflow.Inpaint.LoadMask].Inputs["image"]; got != mask+".png" {
+		t.Errorf("mask load = %v", got)
+	}
+	if got := g[workflow.Inpaint.Sampler].Inputs["denoise"]; got != 0.85 {
+		t.Errorf("denoise = %v, want 0.85", got)
+	}
+}
+
+func TestInpaintMaskDimsMustMatch(t *testing.T) {
+	e := newEnv(t, "e2e_inpaint_dims", compliance.Stub{})
+	img := e.uploadPNG(t, 100, 150)  // → 832x1216
+	mask := e.uploadPNG(t, 300, 300) // → 1024x1024: mismatch
+	resp, err := http.Post(e.ts.URL+"/generate", "application/json",
+		strings.NewReader(`{"prompt": "1girl", "kind": "inpaint", "image_id": "`+img+`", "mask_id": "`+mask+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("dims mismatch = %d, want 400", resp.StatusCode)
 	}
 }
 

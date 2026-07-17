@@ -41,12 +41,12 @@ func (r *Router) Execute(ctx context.Context, graph json.RawMessage, onProgress 
 	return r.pick(ctx).Execute(ctx, graph, onProgress)
 }
 
-// ExecuteAll routes to one process; a non-nil input is uploaded to that
-// same process first (upload/job affinity).
-func (r *Router) ExecuteAll(ctx context.Context, graph json.RawMessage, input *Input, onProgress func(step, total int)) (map[string][]byte, error) {
+// ExecuteAll routes to one process; inputs are uploaded to that same
+// process first (upload/job affinity).
+func (r *Router) ExecuteAll(ctx context.Context, graph json.RawMessage, inputs []Input, onProgress func(step, total int)) (map[string][]byte, error) {
 	c := r.pick(ctx)
-	if input != nil {
-		if err := c.UploadImage(ctx, input.Name, input.Data); err != nil {
+	for _, in := range inputs {
+		if err := c.UploadImage(ctx, in.Name, in.Data); err != nil {
 			return nil, err
 		}
 	}

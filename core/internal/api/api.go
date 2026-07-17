@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/png"
 	"io"
 	"log"
 	"net/http"
@@ -51,6 +53,7 @@ type Server struct {
 	Tpl        workflow.Graph // txt2img base, hash-verified at load
 	PoseTpl    workflow.Graph // pose base (spine + extraction), hash-verified at load
 	Img2ImgTpl workflow.Graph // img2img base (LoadImage → VAEEncode), hash-verified at load
+	InpaintTpl workflow.Graph // inpaint base (img2img + noise mask), hash-verified at load
 	Cfg        Config
 }
 
@@ -82,10 +85,11 @@ var imageIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		assembly.Request
-		// Kind selects the workflow: "txt2img" (default), "img2img"
-		// (requires image_id from POST /uploads), or "pose".
+		// Kind selects the workflow: "txt2img" (default), "img2img",
+		// "inpaint" (image_id [+ mask_id] from POST /uploads), or "pose".
 		Kind    string `json:"kind"`
 		ImageID string `json:"image_id"`
+		MaskID  string `json:"mask_id"`
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
@@ -100,19 +104,37 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "unknown kind "+strconv.Quote(req.Kind))
 		return
 	}
-	if req.Kind == "img2img" {
+	if req.Kind == "img2img" || req.Kind == "inpaint" {
 		if !imageIDPattern.MatchString(req.ImageID) {
-			httpError(w, http.StatusBadRequest, "img2img requires image_id from POST /uploads")
+			httpError(w, http.StatusBadRequest, req.Kind+" requires image_id from POST /uploads")
 			return
 		}
-		if rc, err := s.Blobs.Open(req.ImageID); err != nil {
+		iw, ih, err := s.blobDims(req.ImageID)
+		if err != nil {
 			httpError(w, http.StatusBadRequest, "unknown image_id")
 			return
-		} else {
-			rc.Close()
+		}
+		if req.Kind == "inpaint" {
+			if !imageIDPattern.MatchString(req.MaskID) {
+				httpError(w, http.StatusBadRequest, "inpaint requires mask_id from POST /uploads")
+				return
+			}
+			mw, mh, err := s.blobDims(req.MaskID)
+			if err != nil {
+				httpError(w, http.StatusBadRequest, "unknown mask_id")
+				return
+			}
+			if mw != iw || mh != ih {
+				httpError(w, http.StatusBadRequest,
+					fmt.Sprintf("mask %dx%d does not match image %dx%d", mw, mh, iw, ih))
+				return
+			}
 		}
 		if req.Denoise == nil {
 			d := 0.6 // restructure while keeping composition
+			if req.Kind == "inpaint" {
+				d = 0.85 // masked-area replacement wants strength
+			}
 			req.Denoise = &d
 		}
 	}
@@ -155,6 +177,8 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		graph, err = workflow.BuildPose(s.PoseTpl, spec, s.Cfg.Checkpoint)
 	case "img2img":
 		graph, err = workflow.BuildImg2Img(s.Img2ImgTpl, spec, s.Cfg.Checkpoint, req.ImageID+".png")
+	case "inpaint":
+		graph, err = workflow.BuildInpaint(s.InpaintTpl, spec, s.Cfg.Checkpoint, req.ImageID+".png", req.MaskID+".png")
 	default:
 		graph, err = workflow.BuildTxt2Img(s.Tpl, spec, s.Cfg.Checkpoint)
 	}
@@ -169,7 +193,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "params marshal failed")
 		return
 	}
-	j, err := s.Store.Enqueue(r.Context(), req.Kind, params, graph, req.ImageID)
+	j, err := s.Store.Enqueue(r.Context(), req.Kind, params, graph, req.ImageID, req.MaskID)
 	if err != nil {
 		log.Printf("api: enqueue: %v", err)
 		httpError(w, http.StatusInternalServerError, "enqueue failed")
@@ -293,6 +317,20 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"image_id": id, "width": norm.Width, "height": norm.Height,
 	})
+}
+
+// blobDims reads just the PNG header of a stored blob.
+func (s *Server) blobDims(id string) (int, int, error) {
+	rc, err := s.Blobs.Open(id)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rc.Close()
+	cfg, _, err := image.DecodeConfig(rc)
+	if err != nil {
+		return 0, 0, err
+	}
+	return cfg.Width, cfg.Height, nil
 }
 
 // newUploadID is a v4-style UUID so upload blobs share the job-id namespace

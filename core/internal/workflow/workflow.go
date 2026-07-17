@@ -127,6 +127,29 @@ func BuildImg2Img(tpl Graph, spec assembly.Spec, checkpoint, inputName string) (
 	})
 }
 
+// BuildInpaint: img2img patches + the mask (white = repaint); masked-area
+// denoise defaults higher — the point is replacement.
+func BuildInpaint(tpl Graph, spec assembly.Spec, checkpoint, inputName, maskName string) (json.RawMessage, error) {
+	n := Inpaint
+	denoise := spec.Denoise
+	if denoise == 0 {
+		denoise = 0.85
+	}
+	return apply(tpl, []patch{
+		{n.Checkpoint, "ckpt_name", checkpoint},
+		{n.Positive, "text", spec.Prompt},
+		{n.Negative, "text", spec.Negative},
+		{n.Sampler, "seed", spec.Seed},
+		{n.Sampler, "steps", spec.Steps},
+		{n.Sampler, "cfg", spec.CFG},
+		{n.Sampler, "sampler_name", spec.Sampler},
+		{n.Sampler, "scheduler", spec.Scheduler},
+		{n.Sampler, "denoise", denoise},
+		{n.LoadImage, "image", inputName},
+		{n.LoadMask, "image", maskName},
+	})
+}
+
 // BuildPose: spine patches + extractor resolution at the render's short side.
 func BuildPose(tpl Graph, spec assembly.Spec, checkpoint string) (json.RawMessage, error) {
 	res := min(spec.Width, spec.Height)

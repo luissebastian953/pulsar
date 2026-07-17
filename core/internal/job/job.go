@@ -40,6 +40,7 @@ type Job struct {
 	ID         string
 	Kind       string
 	InputPath  string // blob id of the uploaded input (image-input kinds)
+	MaskPath   string // blob id of the inpaint mask (white = repaint)
 	State      State
 	Params     json.RawMessage
 	Workflow   json.RawMessage
