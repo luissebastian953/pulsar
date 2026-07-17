@@ -30,6 +30,16 @@ func envOr(key, def string) string {
 	return def
 }
 
+func splitNonEmpty(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 func main() {
 	var (
 		port         = envOr("PORT", "8080")
@@ -40,6 +50,7 @@ func main() {
 		checkpoint   = envOr("CHECKPOINT", "illustrious-xl.safetensors")
 		lineage      = envOr("LINEAGE", "illustrious")
 		execTimeout  = envOr("EXEC_TIMEOUT", "5m")
+		corsOrigins  = envOr("CORS_ORIGINS", "*") // comma-separated; empty disables
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -130,7 +141,10 @@ func main() {
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
 			Tags: tagStore, Translator: translator, Tpl: tpl,
-			Cfg: api.Config{Lineage: lineage, Checkpoint: checkpoint},
+			Cfg: api.Config{
+				Lineage: lineage, Checkpoint: checkpoint,
+				CORSOrigins: splitNonEmpty(corsOrigins),
+			},
 		}).Handler(),
 	}
 	go func() {

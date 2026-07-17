@@ -96,6 +96,20 @@ Read these before the corresponding work:
 | `.claude/skills/tag-grounding/` | Changing NL→tag, autocomplete, or the tag DB |
 | `.claude/skills/core-job/` | Adding an endpoint or job type |
 
+## Frontend
+
+`orbit` is Nuxt 3 + Reka UI (headless) + Tailwind v4 + Lucide + VueUse, linted with
+`@nuxt/eslint`. No styled component library — we have our own tokens.
+
+Design tokens live in `@theme` in `app/assets/css/main.css` and are the single source
+of truth. **No arbitrary Tailwind values in components** (`bg-[#6AB7FF]`) — if a
+colour isn't a token, it isn't in the design. Prefer VueUse over lodash; if lodash is
+genuinely needed, import from `lodash-es`, never `lodash` (bundle size — this ships
+to mobile). Targets SPA (`ssr:false`) because Electron and
+Capacitor shells can't run SSR. Auth is **bearer tokens, not cookie sessions** —
+cookies break on `capacitor://` and `file://` origins. This is a `core` constraint,
+not just an `orbit` one. See `docs/frontend.md`.
+
 ## Conventions
 
 - Go: standard layout, `internal/` for everything not imported externally.

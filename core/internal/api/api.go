@@ -24,6 +24,9 @@ import (
 type Config struct {
 	Lineage    string
 	Checkpoint string
+	// CORSOrigins is the allowed cross-origin list; "*" allows any. Empty
+	// disables CORS entirely (same-origin only).
+	CORSOrigins []string
 }
 
 type Server struct {
@@ -48,6 +51,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /translate", s.handleTranslate)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	if len(s.Cfg.CORSOrigins) > 0 {
+		return cors(mux, s.Cfg.CORSOrigins)
+	}
 	return mux
 }
 

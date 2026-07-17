@@ -1,0 +1,13 @@
+<!-- Small mark variant (docs/frontend.md §3): three shapes max, nothing
+     thinner than ~2px on the 60 grid — one ring at .8, the slashed core,
+     one beam thickened to a real stroke. -->
+<svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="60" height="60" rx="13" fill="#0A0A0C"/>
+  <circle cx="30" cy="30" r="19" stroke="white" stroke-opacity="0.8" stroke-width="2.5" fill="none"/>
+  <mask id="slash">
+    <rect width="60" height="60" fill="white"/>
+    <rect x="-14" y="27.5" width="88" height="5" fill="black" transform="rotate(-45 30 30)"/>
+  </mask>
+  <circle cx="30" cy="30" r="10.5" fill="white" mask="url(#slash)"/>
+  <line x1="9" y1="51" x2="51" y2="9" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

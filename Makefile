@@ -30,7 +30,7 @@ run-core: ## run the Go service natively
 	cd core && go run ./cmd/server
 
 run-orbit: ## run the Nuxt dev server natively
-	cd orbit && npm run dev
+	cd orbit && pnpm dev
 
 psql: ## shell into the dev database
 	$(COMPOSE) exec postgres psql -U $${POSTGRES_USER:-pulsar} -d $${POSTGRES_DB:-pulsar}

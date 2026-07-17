@@ -18,7 +18,7 @@ core/bin/
 node_modules/
 orbit/.nuxt/
 orbit/.output/
-orbit/dist/
+orbit/dist
 
 # Python (eval)
 __pycache__/
