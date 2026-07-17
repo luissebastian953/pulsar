@@ -75,3 +75,26 @@ Documented at length elsewhere; listed here so they're findable:
 training data or output delivery preserve the filtering, or they don't merge. This
 isn't bureaucracy — it's the line between a lawful product and a criminal liability,
 and the reasoning is in the doc.
+
+## Commits
+
+Conventional commits, checked by [commitizen](https://commitizen-tools.github.io/commitizen/)
+via a versioned `commit-msg` hook:
+
+```bash
+brew install commitizen   # once per machine
+make hooks                # once per clone
+```
+
+Format: `type(scope): subject` — types `feat`, `fix`, `refactor`, `docs`,
+`test`, `build`, `chore`, `perf`, `ci`; scopes are the top-level areas
+(`core`, `orbit`, `comfy`, `workflows`, `db`, `nltag`, `tags`, …).
+
+```
+feat(orbit): wire pose tabs to per-role images
+fix(core): retry live tag lookup through active aliases
+```
+
+`cz commit` walks you through it interactively; a plain `git commit` is fine
+too — the hook rejects anything off-format. History before the hook predates
+the convention.

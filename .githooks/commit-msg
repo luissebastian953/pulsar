@@ -1,0 +1,3 @@
+#!/bin/sh
+# conventional-commit check (CONTRIBUTING.md#commits)
+cz check --allow-abort --commit-msg-file "$1"
