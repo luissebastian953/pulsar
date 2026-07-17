@@ -29,27 +29,52 @@ const poseRef = useState<{ seed: string, label: string } | null>('poseRef', () =
 const openRefFold = useState('openRefFold', () => false)
 const refStrength = ref(0.6)
 
-// image-to-image: pick → upload once → generate with kind img2img
+// image-to-image / inpaint: eager upload on pick so the mask editor can
+// paint on the normalized image (dims always match the bucket)
 const i2iFile = ref<File | null>(null)
 const i2iPreview = ref('')
 const i2iId = ref('')
+const i2iDims = ref<[number, number]>([0, 0])
 const i2iStrength = ref(0.6)
 const i2iError = ref('')
+const maskId = ref('')
+const maskEditing = ref(false)
 
-function onI2iPick(e: Event) {
+async function onI2iPick(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
-  i2iFile.value = file
-  i2iPreview.value = URL.createObjectURL(file)
-  i2iId.value = ''
   i2iError.value = ''
+  maskId.value = ''
+  try {
+    const up = await api.upload<UploadResult>('/uploads', file)
+    i2iFile.value = file
+    i2iId.value = up.image_id
+    i2iDims.value = [up.width, up.height]
+    i2iPreview.value = api.imageUrl(`/images/${up.image_id}`)
+  }
+  catch (err: unknown) {
+    const ex = err as { data?: { error?: string } }
+    i2iError.value = ex.data?.error || 'upload failed'
+  }
+}
+
+async function onMaskSave(file: File) {
+  maskEditing.value = false
+  try {
+    const up = await api.upload<UploadResult>('/uploads', file)
+    maskId.value = up.image_id
+  }
+  catch (err: unknown) {
+    const ex = err as { data?: { error?: string } }
+    i2iError.value = ex.data?.error || 'mask upload failed'
+  }
 }
 
 function clearI2i() {
-  if (i2iPreview.value) URL.revokeObjectURL(i2iPreview.value)
   i2iFile.value = null
   i2iPreview.value = ''
   i2iId.value = ''
+  maskId.value = ''
   i2iError.value = ''
 }
 if (openRefFold.value) {
@@ -116,21 +141,8 @@ const promptText = computed(() => {
 
 const cost = computed(() => batch.value * (17 + (hires.value ? 8 : 0)))
 
-async function generate() {
+function generate() {
   if (job.busy.value || !promptText.value) return
-  i2iError.value = ''
-  if (i2iFile.value && !i2iId.value) {
-    try {
-      const up = await api.upload<UploadResult>('/uploads', i2iFile.value)
-      i2iId.value = up.image_id
-    }
-    catch (e: unknown) {
-      const err = e as { data?: { error?: string } }
-      i2iError.value = err.data?.error || 'upload failed'
-      folds.i2i = true
-      return
-    }
-  }
   const [width, height] = dims.value
   const req: GenerationRequest = {
     prompt: promptText.value,
@@ -144,8 +156,9 @@ async function generate() {
     quality_tags: qualityTags.value,
   }
   if (i2iId.value) {
-    req.kind = 'img2img'
+    req.kind = maskId.value ? 'inpaint' : 'img2img'
     req.image_id = i2iId.value
+    if (maskId.value) req.mask_id = maskId.value
     req.denoise = i2iStrength.value
   }
   const s = seedText.value.trim()
@@ -277,7 +290,7 @@ const charBadge = computed(() =>
           </div>
         </Fold>
 
-        <Fold v-model="folds.i2i" label="Image to image" :badge="i2iFile ? 'on' : 'off'">
+        <Fold v-model="folds.i2i" label="Image to image" :badge="maskId ? 'inpaint' : (i2iId ? 'on' : 'off')">
           <div class="grid gap-2.5">
             <template v-if="i2iFile">
               <div class="flex items-center gap-2.5 rounded-ctrl border border-line bg-void p-2">
@@ -290,9 +303,24 @@ const charBadge = computed(() =>
                   <Icon name="lucide:x" :size="14" />
                 </button>
               </div>
+              <div class="flex items-center gap-2">
+                <button
+                  class="focus-ring flex-1 cursor-pointer rounded-ctrl border border-line px-3 py-1.5 text-[12px] text-dim hover:border-line-hi"
+                  @click="maskEditing = true"
+                >
+                  {{ maskId ? 'Repaint mask' : 'Paint mask (inpaint)' }}
+                </button>
+                <button
+                  v-if="maskId"
+                  class="focus-ring cursor-pointer rounded-ctrl border border-line px-3 py-1.5 text-[12px] text-faint hover:text-t-artist"
+                  @click="maskId = ''"
+                >
+                  drop mask
+                </button>
+              </div>
               <SliderRow v-model="i2iStrength" label="Strength" :min="0.05" :max="0.95" :step="0.05" :decimals="2" />
               <div class="text-[10.5px] leading-relaxed text-faint">
-                higher = more change; ~0.6 restructures while keeping composition
+                {{ maskId ? 'only the painted area is repainted' : 'higher = more change; ~0.6 restructures while keeping composition' }}
               </div>
             </template>
             <label
@@ -306,6 +334,14 @@ const charBadge = computed(() =>
             <div v-if="i2iError" class="text-[11px] text-warn">{{ i2iError }}</div>
           </div>
         </Fold>
+        <MaskEditor
+          v-if="maskEditing && i2iId"
+          :src="i2iPreview"
+          :width="i2iDims[0]"
+          :height="i2iDims[1]"
+          @save="onMaskSave"
+          @close="maskEditing = false"
+        />
 
         <SectionLabel class="mb-2.5 mt-3.5 border-t border-line pt-3">
           Image

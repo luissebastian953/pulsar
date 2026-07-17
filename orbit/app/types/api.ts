@@ -39,9 +39,10 @@ export type TagLookupResult
 export type PoseRole = 'source' | 'lineart' | 'skeleton'
 
 export type GenerationRequest = {
-  kind?: 'txt2img' | 'img2img' | 'pose'
-  // img2img: upload id from POST /uploads + denoise (higher = more change)
+  kind?: 'txt2img' | 'img2img' | 'inpaint' | 'pose'
+  // img2img/inpaint: upload ids from POST /uploads + denoise
   image_id?: string
+  mask_id?: string
   denoise?: number
   prompt: string
   negative?: string
