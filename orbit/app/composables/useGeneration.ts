@@ -1,10 +1,8 @@
-import type { GenerationRequest, JobPayload } from '~/types/api'
+import type { GenerationRequest, JobPayload, PoseRole } from '~/types/api'
 
 export type GenPhase = 'idle' | 'queued' | 'generating' | 'done' | 'failed' | 'blocked'
 
-// One tracked generation: POST /generate then native EventSource on
-// /jobs/:id/stream. Reconnection is safe — every SSE connection starts from
-// a fresh DB snapshot server-side, and the server closes after terminal.
+// one tracked generation: POST /generate + SSE stream; reconnect-safe
 export function useJob(onDone?: (job: JobPayload) => void) {
   const api = useApi()
   const phase = ref<GenPhase>('idle')
@@ -12,6 +10,8 @@ export function useJob(onDone?: (job: JobPayload) => void) {
   const total = ref(0)
   const queuePos = ref(0)
   const imageUrl = ref('')
+  // per-role URLs for multi-output kinds (pose: source/lineart/skeleton)
+  const images = ref<Partial<Record<PoseRole, string>>>({})
   const error = ref('')
   const seed = ref('')
   let es: EventSource | null = null
@@ -28,6 +28,7 @@ export function useJob(onDone?: (job: JobPayload) => void) {
     total.value = req.steps ?? 24
     queuePos.value = 0
     imageUrl.value = ''
+    images.value = {}
     error.value = ''
     try {
       const { job_id } = await api.post<{ job_id: string }>('/generate', req)
@@ -47,6 +48,9 @@ export function useJob(onDone?: (job: JobPayload) => void) {
         const p = JSON.parse(e.data) as JobPayload
         phase.value = 'done'
         imageUrl.value = api.imageUrl(p.image_url)
+        images.value = Object.fromEntries(
+          Object.entries(p.images ?? {}).map(([role, url]) => [role, api.imageUrl(url)]),
+        )
         seed.value = String(p.params?.seed ?? '')
         close()
         onDone?.(p)
@@ -80,7 +84,7 @@ export function useJob(onDone?: (job: JobPayload) => void) {
 
   onScopeDispose(close)
 
-  return { phase, step, total, queuePos, imageUrl, error, seed, start, showResult, busy }
+  return { phase, step, total, queuePos, imageUrl, images, error, seed, start, showResult, busy }
 }
 
 export type JobTracker = ReturnType<typeof useJob>

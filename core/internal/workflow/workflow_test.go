@@ -49,7 +49,10 @@ func spec(t *testing.T) assembly.Spec {
 		Width:    1024, Height: 1024,
 		Steps: 28, CFG: 5.5,
 		Sampler: "dpmpp_2m", Scheduler: "karras",
-	}, assembly.Options{Lineage: "illustrious", Seed: 42})
+	}, assembly.Options{
+		Lineage: "illustrious", Seed: 42,
+		QualityTags: "masterpiece, best quality", ForbiddenTagUC: "loli, shota, child",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +74,7 @@ func TestBuildTxt2ImgPatchesByNodeID(t *testing.T) {
 		want        any
 	}{
 		{Txt2Img.Checkpoint, "ckpt_name", "test-ckpt.safetensors"},
-		{Txt2Img.Positive, "text", "masterpiece, best quality, very aesthetic, absurdres, 1girl, silver hair"},
+		{Txt2Img.Positive, "text", "masterpiece, best quality, 1girl, silver hair"},
 		{Txt2Img.Latent, "width", float64(1024)},
 		{Txt2Img.Latent, "height", float64(1024)},
 		{Txt2Img.Latent, "batch_size", float64(1)},
@@ -113,5 +116,60 @@ func TestBuildDoesNotMutateTemplate(t *testing.T) {
 func TestSetUnknownNode(t *testing.T) {
 	if err := loadTpl(t).Set("99", "text", "x"); err == nil {
 		t.Fatal("setting a missing node must error, not create it")
+	}
+}
+
+func TestBuildPosePatchesSpineAndExtractors(t *testing.T) {
+	tpl, err := Load(workflowsDir, TplPose, PoseSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := BuildPose(tpl, spec(t), "test-ckpt.safetensors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g Graph
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	// spine patched exactly like txt2img
+	if got := g[Pose.Sampler].Inputs["seed"]; got != float64(42) {
+		t.Errorf("seed = %v", got)
+	}
+	if got := g[Pose.Checkpoint].Inputs["ckpt_name"]; got != "test-ckpt.safetensors" {
+		t.Errorf("ckpt = %v", got)
+	}
+	// extractors follow the render's short side (1024×1024 → 1024)
+	for _, node := range []string{Pose.Lineart, Pose.Openpose} {
+		if got := g[node].Inputs["resolution"]; got != float64(1024) {
+			t.Errorf("node %s resolution = %v, want 1024", node, got)
+		}
+	}
+	// extraction is deterministic post-processing of the decoded image, not
+	// prompted — both preprocessors must read from the VAE decode
+	for _, node := range []string{Pose.Lineart, Pose.Openpose} {
+		ref, ok := g[node].Inputs["image"].([]any)
+		if !ok || len(ref) != 2 || ref[0] != Pose.Decode {
+			t.Errorf("node %s image input = %v, want link to node %s", node, g[node].Inputs["image"], Pose.Decode)
+		}
+	}
+	// delivered lineart is inverted to black-on-white — the save must read
+	// through the invert, not the raw conditioning output
+	if ref, ok := g[Pose.SaveLineart].Inputs["images"].([]any); !ok || ref[0] != Pose.LineartInvert {
+		t.Errorf("lineart save reads %v, want the invert node %s", g[Pose.SaveLineart].Inputs["images"], Pose.LineartInvert)
+	}
+}
+
+func TestOutputRoles(t *testing.T) {
+	if roles, ok := OutputRoles("txt2img"); !ok || len(roles) != 1 || roles[""] != Txt2Img.Save {
+		t.Errorf("txt2img roles = %v, %v", roles, ok)
+	}
+	roles, ok := OutputRoles("pose")
+	if !ok || len(roles) != 3 || roles[""] != Pose.SaveSource ||
+		roles["lineart"] != Pose.SaveLineart || roles["skeleton"] != Pose.SaveSkeleton {
+		t.Errorf("pose roles = %v, %v", roles, ok)
+	}
+	if _, ok := OutputRoles("manga"); ok {
+		t.Error("unknown kind must not resolve")
 	}
 }

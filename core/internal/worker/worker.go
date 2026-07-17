@@ -10,11 +10,12 @@ import (
 	"pulsar/core/internal/blob"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/workflow"
 )
 
-// Executor is satisfied by comfy.Router.
+// Executor is satisfied by comfy.Router; outputs keyed by SaveImage node ID.
 type Executor interface {
-	Execute(ctx context.Context, graph json.RawMessage, onProgress func(step, total int)) ([]byte, error)
+	ExecuteAll(ctx context.Context, graph json.RawMessage, onProgress func(step, total int)) (map[string][]byte, error)
 }
 
 type Worker struct {
@@ -62,7 +63,15 @@ func (w *Worker) process(ctx context.Context, j *job.Job) {
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	img, err := w.Exec.Execute(execCtx, j.Workflow, func(step, total int) {
+	roles, ok := workflow.OutputRoles(j.Kind)
+	if !ok {
+		w.finish(ctx, j.ID, job.EventFailed, func() error {
+			return w.Store.MarkFailed(ctx, j.ID, "unknown job kind "+j.Kind)
+		})
+		return
+	}
+
+	outs, err := w.Exec.ExecuteAll(execCtx, j.Workflow, func(step, total int) {
 		w.Broker.Publish(j.ID, job.Event{Type: job.EventProgress, Step: step, Total: total})
 	})
 	if err != nil {
@@ -72,30 +81,54 @@ func (w *Worker) process(ctx context.Context, j *job.Job) {
 		return
 	}
 
-	// post-generation, pre-delivery — the image must not reach storage or a
-	// client unclassified, and an unavailable checker blocks (fail closed)
-	dec, cerr := w.Checker.CheckOutput(ctx, img)
-	if cerr != nil || !dec.Allowed {
-		if cerr != nil {
-			log.Printf("worker: job %s: compliance check unavailable, blocking: %v", j.ID, cerr)
-		} else {
-			log.Printf("worker: job %s blocked: %s", j.ID, dec.Reason)
+	// pre-delivery compliance, fail closed; one blocked role blocks the job
+	for role, node := range roles {
+		img, ok := outs[node]
+		if !ok {
+			w.finish(ctx, j.ID, job.EventFailed, func() error {
+				return w.Store.MarkFailed(ctx, j.ID, "missing output for node "+node)
+			})
+			return
 		}
-		w.finish(ctx, j.ID, job.EventBlocked, func() error {
-			return w.Store.MarkBlocked(ctx, j.ID)
-		})
-		return
+		dec, cerr := w.Checker.CheckOutput(ctx, img)
+		if cerr != nil || !dec.Allowed {
+			if cerr != nil {
+				log.Printf("worker: job %s: compliance check unavailable, blocking: %v", j.ID, cerr)
+			} else {
+				log.Printf("worker: job %s blocked (%s): %s", j.ID, roleName(role), dec.Reason)
+			}
+			w.finish(ctx, j.ID, job.EventBlocked, func() error {
+				return w.Store.MarkBlocked(ctx, j.ID)
+			})
+			return
+		}
 	}
 
-	if err := w.Blobs.Put(j.ID, img); err != nil {
-		w.finish(ctx, j.ID, job.EventFailed, func() error {
-			return w.Store.MarkFailed(ctx, j.ID, "store image: "+err.Error())
-		})
-		return
+	for role, node := range roles {
+		if err := w.Blobs.Put(blobID(j.ID, role), outs[node]); err != nil {
+			w.finish(ctx, j.ID, job.EventFailed, func() error {
+				return w.Store.MarkFailed(ctx, j.ID, "store image: "+err.Error())
+			})
+			return
+		}
 	}
 	w.finish(ctx, j.ID, job.EventDone, func() error {
 		return w.Store.MarkDone(ctx, j.ID, j.ID+".png")
 	})
+}
+
+func blobID(jobID, role string) string {
+	if role == "" {
+		return jobID
+	}
+	return jobID + "-" + role
+}
+
+func roleName(role string) string {
+	if role == "" {
+		return "primary"
+	}
+	return role
 }
 
 // finish commits the terminal state before publishing, so subscribers that

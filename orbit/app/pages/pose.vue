@@ -81,6 +81,7 @@ const anyDone = computed(() => cells.some(c => c.phase.value === 'done'))
 function generate() {
   if (busy.value || !combined.value.length) return
   const req: GenerationRequest = {
+    kind: 'pose',
     prompt: combined.value.map(t => t.canonical).join(', '),
     width: 832,
     height: 1216,
@@ -223,17 +224,12 @@ function usePose() {
           @click="cell.phase.value === 'done' && (selected = i)"
         >
           <img
-            v-if="cell.phase.value === 'done' && tab === 'source'"
-            :src="cell.imageUrl.value"
-            :alt="`pose ${i + 1}`"
+            v-if="cell.phase.value === 'done'"
+            :src="cell.images.value[tab] ?? cell.imageUrl.value"
+            :alt="`pose ${i + 1} ${tab}`"
             class="absolute inset-0 size-full object-cover"
+            :class="{ 'bg-white': tab !== 'source' }"
           >
-          <div v-else-if="cell.phase.value === 'done'" class="p-4 text-center">
-            <div class="font-mono text-xs text-dim">{{ tab }}</div>
-            <div class="mt-1 text-[10.5px] leading-relaxed text-faint">
-              extraction lands with the pose workflow
-            </div>
-          </div>
           <div v-else class="text-center">
             <div class="font-mono text-xs text-faint">
               {{ cell.busy.value ? '…' : `▢ ${i + 1}` }}

@@ -1,6 +1,5 @@
-// Package comfy is the ComfyUI API client and per-GPU process router.
-// One ComfyUI process runs one workflow at a time; treat processes as
-// unreliable (docs/architecture.md#concurrency).
+// Package comfy: ComfyUI client + per-GPU router; one workflow per
+// process, treat as unreliable (docs/architecture.md#concurrency).
 package comfy
 
 import (
@@ -80,11 +79,21 @@ type wsMsg struct {
 	} `json:"data"`
 }
 
-// Execute submits a graph and blocks until the image is ready:
-// WS connect → POST /prompt → progress over WS → GET /history → GET /view.
-// The WS is dialed before submitting so fast completions can't be missed;
-// if it drops mid-run, completion falls back to polling /history.
+// Execute is ExecuteAll for the one-SaveImage case.
 func (c *Client) Execute(ctx context.Context, graph json.RawMessage, onProgress func(step, total int)) ([]byte, error) {
+	outs, err := c.ExecuteAll(ctx, graph, onProgress)
+	if err != nil {
+		return nil, err
+	}
+	for _, img := range outs {
+		return img, nil
+	}
+	return nil, fmt.Errorf("comfy: no output images")
+}
+
+// ExecuteAll runs a graph and returns every output image keyed by
+// SaveImage node ID; WS dials before submit, /history poll is the fallback.
+func (c *Client) ExecuteAll(ctx context.Context, graph json.RawMessage, onProgress func(step, total int)) (map[string][]byte, error) {
 	conn, _, err := websocket.Dial(ctx, c.wsURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("comfy ws dial: %w", err)
@@ -104,7 +113,7 @@ func (c *Client) Execute(ctx context.Context, graph json.RawMessage, onProgress 
 				return nil, ctx.Err()
 			}
 			// WS died but the prompt may still be running — poll for it
-			return c.pollImage(ctx, promptID)
+			return c.pollImages(ctx, promptID)
 		}
 		if msg.Data.PromptID != promptID {
 			continue
@@ -118,7 +127,7 @@ func (c *Client) Execute(ctx context.Context, graph json.RawMessage, onProgress 
 			return nil, fmt.Errorf("comfy execution error: %s", msg.Data.ExceptionMessage)
 		case "executing":
 			if msg.Data.Node == nil { // whole graph finished
-				return c.pollImage(ctx, promptID)
+				return c.pollImages(ctx, promptID)
 			}
 		}
 	}
@@ -165,16 +174,16 @@ type historyEntry struct {
 	} `json:"outputs"`
 }
 
-// pollImage waits for the prompt to appear in /history, then fetches the
-// first output image via /view.
-func (c *Client) pollImage(ctx context.Context, promptID string) ([]byte, error) {
+// pollImages fetches each node's first output image once /history has it.
+func (c *Client) pollImages(ctx context.Context, promptID string) (map[string][]byte, error) {
 	for {
 		var hist map[string]historyEntry
 		if err := c.getJSON(ctx, "/history/"+promptID, &hist); err != nil {
 			return nil, err
 		}
 		if entry, ok := hist[promptID]; ok {
-			for _, out := range entry.Outputs {
+			imgs := make(map[string][]byte)
+			for node, out := range entry.Outputs {
 				for _, img := range out.Images {
 					if img.Type != "output" {
 						continue
@@ -184,10 +193,18 @@ func (c *Client) pollImage(ctx context.Context, promptID string) ([]byte, error)
 						"subfolder": {img.Subfolder},
 						"type":      {img.Type},
 					}
-					return c.getBytes(ctx, "/view?"+q.Encode())
+					data, err := c.getBytes(ctx, "/view?"+q.Encode())
+					if err != nil {
+						return nil, err
+					}
+					imgs[node] = data
+					break
 				}
 			}
-			return nil, fmt.Errorf("comfy history %s: no output images", promptID)
+			if len(imgs) == 0 {
+				return nil, fmt.Errorf("comfy history %s: no output images", promptID)
+			}
+			return imgs, nil
 		}
 		select {
 		case <-ctx.Done():

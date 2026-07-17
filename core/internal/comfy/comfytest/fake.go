@@ -1,6 +1,4 @@
-// Package comfytest is a fake ComfyUI server implementing the slice of the
-// API core uses (/prompt, /ws, /history, /view, /queue). It exists so the
-// request-to-image spine is testable end-to-end without a GPU.
+// Package comfytest: fake ComfyUI for GPU-free end-to-end tests.
 package comfytest
 
 import (
@@ -34,6 +32,8 @@ type Fake struct {
 	PNG []byte
 	// FailExecution makes every prompt end in an execution_error.
 	FailExecution bool
+	// TagOutputs appends the filename to /view bytes (still a valid PNG).
+	TagOutputs bool
 }
 
 func New(t *testing.T) *Fake {
@@ -125,22 +125,31 @@ func (f *Fake) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// one output image per SaveImage node, like real ComfyUI
 func (f *Fake) handleHistory(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	f.mu.Lock()
-	_, known := f.graphs[id]
+	graph, known := f.graphs[id]
 	f.mu.Unlock()
 	out := map[string]any{}
 	if known && !f.FailExecution {
-		out[id] = map[string]any{
-			"outputs": map[string]any{
-				"7": map[string]any{
-					"images": []map[string]string{
-						{"filename": "pulsar_00001_.png", "subfolder": "", "type": "output"},
-					},
-				},
-			},
+		var nodes map[string]struct {
+			ClassType string `json:"class_type"`
 		}
+		outputs := map[string]any{}
+		if json.Unmarshal(graph, &nodes) == nil {
+			for nodeID, n := range nodes {
+				if n.ClassType != "SaveImage" {
+					continue
+				}
+				outputs[nodeID] = map[string]any{
+					"images": []map[string]string{
+						{"filename": "node-" + nodeID + ".png", "subfolder": "", "type": "output"},
+					},
+				}
+			}
+		}
+		out[id] = map[string]any{"outputs": outputs}
 	}
 	json.NewEncoder(w).Encode(out)
 }
@@ -148,6 +157,9 @@ func (f *Fake) handleHistory(w http.ResponseWriter, r *http.Request) {
 func (f *Fake) handleView(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Write(f.PNG)
+	if f.TagOutputs {
+		w.Write([]byte(r.URL.Query().Get("filename")))
+	}
 }
 
 func (f *Fake) handleQueue(w http.ResponseWriter, r *http.Request) {

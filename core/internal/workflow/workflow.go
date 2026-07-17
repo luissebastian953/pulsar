@@ -1,6 +1,5 @@
-// Package workflow loads versioned API-format ComfyUI templates and patches
-// values by node ID. Graphs are never constructed or rewired in code — the
-// JSON in workflows/ is the single source of truth.
+// Package workflow: load hash-pinned API-format templates, patch by node
+// ID — never rewire graphs in code (.claude/skills/comfy-workflow).
 package workflow
 
 import (
@@ -20,9 +19,7 @@ type Node struct {
 
 type Graph map[string]*Node
 
-// Load reads a template and verifies its content hash. A mismatch means the
-// file was edited without bumping the pinned hash (and likely without
-// checking node IDs) — fail fast rather than patch the wrong nodes.
+// Load reads a template and verifies its pinned content hash.
 func Load(dir, name, wantSHA256 string) (Graph, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, name))
 	if err != nil {
@@ -67,18 +64,27 @@ func (g Graph) Set(nodeID, input string, value any) error {
 	return nil
 }
 
-// BuildTxt2Img patches a txt2img template with a resolved spec and returns
-// submit-ready API-format JSON.
-func BuildTxt2Img(tpl Graph, spec assembly.Spec, checkpoint string) (json.RawMessage, error) {
+type patch struct {
+	node, input string
+	value       any
+}
+
+func apply(tpl Graph, patches []patch) (json.RawMessage, error) {
 	g, err := tpl.Clone()
 	if err != nil {
 		return nil, err
 	}
-	n := Txt2Img
-	for _, p := range []struct {
-		node, input string
-		value       any
-	}{
+	for _, p := range patches {
+		if err := g.Set(p.node, p.input, p.value); err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(g)
+}
+
+func spinePatches(spec assembly.Spec, checkpoint string) []patch {
+	n := Txt2Img // the pose spine shares these IDs by construction
+	return []patch{
 		{n.Checkpoint, "ckpt_name", checkpoint},
 		{n.Positive, "text", spec.Prompt},
 		{n.Negative, "text", spec.Negative},
@@ -90,10 +96,20 @@ func BuildTxt2Img(tpl Graph, spec assembly.Spec, checkpoint string) (json.RawMes
 		{n.Sampler, "cfg", spec.CFG},
 		{n.Sampler, "sampler_name", spec.Sampler},
 		{n.Sampler, "scheduler", spec.Scheduler},
-	} {
-		if err := g.Set(p.node, p.input, p.value); err != nil {
-			return nil, err
-		}
 	}
-	return json.Marshal(g)
+}
+
+// BuildTxt2Img patches a txt2img template with a resolved spec and returns
+// submit-ready API-format JSON.
+func BuildTxt2Img(tpl Graph, spec assembly.Spec, checkpoint string) (json.RawMessage, error) {
+	return apply(tpl, spinePatches(spec, checkpoint))
+}
+
+// BuildPose: spine patches + extractor resolution at the render's short side.
+func BuildPose(tpl Graph, spec assembly.Spec, checkpoint string) (json.RawMessage, error) {
+	res := min(spec.Width, spec.Height)
+	return apply(tpl, append(spinePatches(spec, checkpoint),
+		patch{Pose.Lineart, "resolution", res},
+		patch{Pose.Openpose, "resolution", res},
+	))
 }

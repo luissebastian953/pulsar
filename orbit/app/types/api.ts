@@ -7,7 +7,7 @@ export type TranslatedTag = {
   category: TagCategory
   count: number
   concept: string
-  stage: 'exact' | 'alias' | 'fuzzy'
+  stage: 'exact' | 'alias' | 'fuzzy' | 'live'
 }
 
 export type TranslateResult = {
@@ -19,9 +19,21 @@ export type TagSuggestion = {
   canonical: string
   category: TagCategory
   count: number
+  // validated live against Danbooru rather than served from the local DB
+  stage?: string
+  // exists on Danbooru but post-dates the model's training data — it will
+  // autocomplete honestly and render poorly
+  newer_than_model?: boolean
 }
 
+export type TagLookupResult
+  = | { found: false }
+    | { found: true, tag: TagSuggestion }
+
+export type PoseRole = 'source' | 'lineart' | 'skeleton'
+
 export type GenerationRequest = {
+  kind?: 'txt2img' | 'pose'
   prompt: string
   negative?: string
   width?: number
@@ -56,6 +68,7 @@ export type JobPayload = {
   state: JobState
   params: GenerationParams
   image_url?: string
+  images?: Partial<Record<PoseRole, string>>
   error?: string
   queue_position?: number
   created_at: string

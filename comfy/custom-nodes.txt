@@ -1,0 +1,4 @@
+# Pinned ComfyUI custom nodes: <repo-url> <commit>
+# Consumed by the Dockerfile and run-native.sh. Pin a node here in the same
+# change that adds a workflow depending on it (.claude/skills/comfy-workflow/).
+https://github.com/Fannovel16/comfyui_controlnet_aux e8b689a513c3e6b63edc44066560ca5919c0576e

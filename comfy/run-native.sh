@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Native ComfyUI for dev machines without NVIDIA — Apple Silicon runs on MPS via
-# the default torch wheels. The docker image (Dockerfile) is the deploy target;
-# this reads the same COMFYUI_REF so the two can't drift.
+# Native ComfyUI for no-NVIDIA dev (see comfy/README.md).
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,7 +20,28 @@ if [ ! -x "$VENV/bin/python" ]; then
   "$VENV/bin/pip" install -r "$APP/requirements.txt"
 fi
 
-# Same layout as the docker mount, but with an absolute host path.
+# pinned custom nodes (custom-nodes.txt); idempotent
+while read -r url sha; do
+  [ -z "$url" ] && continue
+  case "$url" in '#'*) continue ;; esac
+  d="$APP/custom_nodes/$(basename "$url")"
+  if [ ! -d "$d" ] || [ "$(git -C "$d" rev-parse HEAD 2>/dev/null)" != "$sha" ]; then
+    rm -rf "$d"
+    git init -q "$d"
+    git -C "$d" fetch -q --depth 1 "$url" "$sha"
+    git -C "$d" checkout -q FETCH_HEAD
+    if [ -f "$d/requirements.txt" ]; then
+      # onnxruntime-gpu has no macOS wheels; failed install retries clean
+      if ! sed 's/^onnxruntime-gpu.*/onnxruntime/' "$d/requirements.txt" \
+        | "$VENV/bin/pip" install -r /dev/stdin; then
+        rm -rf "$d"
+        exit 1
+      fi
+    fi
+  fi
+done < "$DIR/custom-nodes.txt"
+
+# docker mount layout, absolute host path
 cat > "$DIR/.extra_model_paths.yaml" <<EOF
 pulsar:
   base_path: $DIR/models

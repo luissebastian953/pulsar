@@ -7,9 +7,7 @@ import (
 	"log"
 )
 
-// Router fans work out across ComfyUI processes (one per GPU), routing each
-// job to the shallowest queue. Exists from day one even with a single
-// process, so scaling to multi-GPU is config, not rework.
+// Router routes each job to the shallowest ComfyUI queue (one per GPU).
 type Router struct {
 	clients []*Client
 }
@@ -41,4 +39,8 @@ func (r *Router) pick(ctx context.Context) *Client {
 
 func (r *Router) Execute(ctx context.Context, graph json.RawMessage, onProgress func(step, total int)) ([]byte, error) {
 	return r.pick(ctx).Execute(ctx, graph, onProgress)
+}
+
+func (r *Router) ExecuteAll(ctx context.Context, graph json.RawMessage, onProgress func(step, total int)) (map[string][]byte, error) {
+	return r.pick(ctx).ExecuteAll(ctx, graph, onProgress)
 }

@@ -21,7 +21,7 @@ func TestExecute(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	graph := json.RawMessage(`{"5":{"class_type":"KSampler","inputs":{"seed":7}}}`)
+	graph := json.RawMessage(`{"5":{"class_type":"KSampler","inputs":{"seed":7}},"7":{"class_type":"SaveImage","inputs":{}}}`)
 	var steps []int
 	img, err := c.Execute(ctx, graph, func(step, total int) {
 		if total != fake.Steps {
