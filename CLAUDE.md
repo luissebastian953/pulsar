@@ -31,10 +31,19 @@ Don't re-litigate these in every conversation. They're settled.
 
 **Child safety gates launch.** Booru datasets contain sexualized depictions of
 apparent minors, and anime models reproduce them readily because they're in the
-training distribution. Filtering this from training data *and* generated outputs is
-mandatory — legally and ethically. Never design around it, never treat it as
-optional polish, never remove it to "unlock NSFW." Any change touching training
-data or output delivery must preserve it. See `docs/compliance.md`.
+training distribution — a neutral `1girl` prompt has produced one in this repo.
+Filtering this from training data *and* generated outputs is mandatory — legally
+and ethically. Never design around it, never treat it as optional polish, never
+remove it to "unlock NSFW." Two mechanisms exist today: the `FORBIDDEN_TAG_UC`
+age-suppression negative (value in env per the no-hardcode rule; its **presence
+is enforced in code** — `cmd/server` refuses to boot without it and
+`assembly.Build` refuses per request, pinned by
+`TestForbiddenTagUCIsUnconditional`; it is never user-toggleable and holds first
+position in every negative) and the compliance hook call sites. The negative is
+distribution steering; the phase-4 output classifier is the gate. Any change
+touching prompt assembly, training data, or output delivery must preserve both,
+and the fail-closed presence checks must never be weakened to warnings. See
+`docs/compliance.md`.
 
 **Respect provider terms.** Don't design around a cloud provider's AUP. Pick infra
 that permits legal adult content, or self-host.
@@ -78,7 +87,10 @@ Preserve these; they're load-bearing.
   to the ComfyUI process that will run the job → patch `LoadImage`.
 - **`nltag` grounds against the tag DB, never the LLM's imagination.** The LLM
   decomposes; the tag DB decides vocabulary. Dropping an unmappable concept is
-  correct behaviour, not a failure.
+  correct behaviour, not a failure. The cascade's last resort before dropping is
+  a live Danbooru check (`tags.Live`) that writes hits through — floor-gated, so
+  the DB stays the intersection of "exists" and "the model learned it", and
+  never for the pose subset.
 
 ## Concurrency model
 

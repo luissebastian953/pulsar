@@ -40,9 +40,21 @@ reason.
 concept → normalise
         → exact / alias hit?         → canonical
         → fuzzy (WRatio >= ~88)?     → canonical      (typos, wording)
-        → embedding NN (>= ~0.55)?   → canonical      (paraphrases)
+        → embedding NN (>= ~0.55)?   → canonical      (paraphrases — not built yet)
+        → live Danbooru hit?         → canonical      (tags newer than the DB)
         → None                       → DROP
 ```
+
+Two cascade details that live here, not in code comments:
+
+- **Squeezed-form fallback.** "1 girl" normalises to `1_girl` but the canonical
+  tag is `1girl` — a pattern (`1girl`, `2girls`, …) trigram ranking is bad at,
+  so the exact stage retries with separators squeezed out before falling
+  through to fuzzy.
+- **Negatives are chunked like prompts.** CLIP truncates past 77 tokens per
+  chunk; the front of the first chunk is never truncated, which is why the
+  forbidden-tag terms (FORBIDDEN_TAG_UC) hold first position in every
+  negative — order is a safety property, not style.
 
 **Returning `None` is correct behaviour, not a failure.** A concept with no
 corresponding tag should be dropped, never force-matched. Force-matching is how you
@@ -51,6 +63,32 @@ the output ignore them.
 
 If you find yourself lowering thresholds to "reduce drops," stop. Drops are
 information.
+
+## The live stage (`tags.Live`)
+
+The DB is a snapshot; Danbooru is not. On a DB miss, `tags.Live` asks Danbooru
+directly (exact name, then through active aliases) and **writes hits through**
+— tag, category, count, `danbooru_created_at`, and the alias followed. The
+vocabulary self-heals where users push its edges; a character who debuted
+yesterday resolves today, no reseed. This is the freshness edge over NovelAI's
+stale suggestions.
+
+Three rules keep it honest:
+
+- **Floor-gated.** Below `MIN_POST_COUNT` (the same floor as seeding), a found
+  tag is *reported* to an explicit `/tags/lookup` but never stored and never
+  grounds. The DB stays the intersection, not a Danbooru mirror.
+- **Never for the pose subset.** The closed vocabulary is a feature.
+- **`newer_than_model` is the other half of the intersection.** "Exists on
+  Danbooru" ≠ "the model learned it": `danbooru_created_at` is compared to
+  `assembly.KnowledgeCutoff(lineage)` and surfaced through the API — a 2026
+  character validates honestly and renders poorly until a newer lineage. The
+  flag overstates newness for renames/splits (a new tag name, old posts);
+  treat it as advisory.
+
+Outages degrade to the pre-live behaviour (drop, logged) — translation never
+fails because Danbooru is down. Lookups are serialized with a negative cache;
+they only fire on misses, so Danbooru sees genuine novelty, not keystrokes.
 
 ## Surface the drops
 

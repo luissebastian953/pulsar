@@ -100,6 +100,21 @@ the job** (per-process `input/` dir unless storage is shared) → patch `LoadIma
 That last point bites on multi-GPU. The upload and the job must land on the same
 process.
 
+## Multi-output kinds
+
+One generation can deliver several images (pose: source + lineart + skeleton).
+The machinery is generic — extend it, don't fork it:
+
+- `workflow.OutputRoles(kind)` maps role → SaveImage node ID. Role `""` is the
+  primary: its blob is the bare job ID and it fills `image_path`/`image_url`;
+  other roles store as `<jobID>-<role>` and appear in the payload's `images`
+  map. `POST /generate` takes `kind` ("txt2img" default).
+- The worker loops roles: `comfy.ExecuteAll` returns outputs keyed by node ID,
+  **every** image passes `CheckOutput`, and one blocked role blocks the whole
+  job — extractions derive from the source, partial delivery makes no sense.
+- A new kind = template + `OutputRoles` case + (if multi-output) nothing else:
+  worker, blobs, API, and SSE already handle it.
+
 ## Adding a new generation mode — checklist
 
 1. Does it need a new base template or a feature patch? (Patch, usually — see
@@ -112,6 +127,19 @@ process.
    `ipadapter` — reuse it
 7. Store resolved params
 8. Test `assembly` and `workflow` without a GPU
+
+## Configuration
+
+All prompt strings (QUALITY_TAGS, DEFAULT_UC, FORBIDDEN_TAG_UC) and deployment
+knobs are env vars — `.env.example` is the reference. `internal/dotenv` loads
+the repo-root `.env` at boot for native runs; a real environment variable,
+even explicitly empty, always wins (compose precedence). FORBIDDEN_TAG_UC is
+required: `cmd/server` refuses to boot and `assembly.Build` refuses per
+request when it's empty — fail-closed by design (CLAUDE.md non-negotiables),
+never weaken these to warnings. Validation whitelists (buckets, samplers,
+lineages) and integrity pins (template hashes, node IDs) stay in code on
+purpose: env-editing those produces garbage output or graph drift, not
+configuration.
 
 ## Operational reality
 

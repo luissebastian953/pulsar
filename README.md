@@ -50,16 +50,39 @@ pulsar/
 Each toolchain roots in its own subdirectory. The repo root holds only
 orchestration. See `CONTRIBUTING.md` for why it's a monorepo and when to split.
 
-## Quickstart
+## Running it
+
+Prerequisites: Docker, Go 1.25+, pnpm 10 (`corepack enable`), Python 3.13+
+(for native ComfyUI). Everything is configured by env vars — `cp .env.example
+.env`; the defaults work for local dev. Native runs and compose read the same
+repo-root `.env` (core loads it at boot; real environment variables win).
+
+One-time setup:
 
 ```bash
-make dev          # postgres + comfy + core + orbit
-make migrate      # schema
-make seed-tags    # Danbooru dump → tag DB (slow, once)
-open http://localhost:3000
+make dev           # infra: postgres (GPU=1 adds containerised ComfyUI — linux + NVIDIA)
+make migrate       # apply db/migrations in order
+make seed-tags     # Danbooru → tag DB (~4 min; MIN_POST_COUNT tunes the floor)
+make fetch-models  # pinned weights → comfy/models (~7 GB, resumable, sha256-verified)
+make hooks         # conventional-commit check (brew install commitizen first)
+cd orbit && pnpm install
 ```
 
-Requires a CUDA GPU (12 GB+) or a `COMFY_URL` pointing at a remote ComfyUI.
+Then three terminals:
+
+```bash
+make run-comfy     # ComfyUI natively — MPS on Apple Silicon, CUDA elsewhere
+make run-core      # Go service on :8080 (PORT=8081 if something owns 8080)
+make run-orbit     # Nuxt dev on :3000
+```
+
+Open http://localhost:3000, pass the age gate, generate. Without an LLM key
+(`ANTHROPIC_API_KEY` / `DEEPSEEK_API_KEY`), plain-language translation 503s
+gracefully; tag mode and generation work regardless.
+
+Deploy target is linux + NVIDIA via `make dev GPU=1` — the `comfy/` image pins
+ComfyUI and custom nodes by commit. Apple Silicon is a dev environment: the
+same pins run natively on MPS (a 24-step 832×1216 SDXL image takes ~4 min).
 
 ## Docs
 
@@ -74,8 +97,12 @@ Requires a CUDA GPU (12 GB+) or a `COMFY_URL` pointing at a remote ComfyUI.
 
 ## Status
 
-Pre-MVP. Phases 1–3 (foundation → generation core → application layer) are the
-buildable MVP; phase 4 (compliance) gates public launch.
+Working end-to-end on real hardware: txt2img and pose (source + lineart +
+skeleton from one generation), 121k-tag DB with NL grounding and live Danbooru
+validation (new tags resolve without a reseed, flagged when they post-date the
+model's training), full frontend. Phase 4 (compliance classification) gates
+public launch — the unconditional safety negative in `assembly` is distribution
+steering, not the gate.
 
 ## Licence
 

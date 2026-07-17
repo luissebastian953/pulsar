@@ -102,19 +102,34 @@ knowledge lives in the dense region: normal, finished, full-colour illustrations
 So: generate on-distribution, then extract deterministically.
 
 ```
-KSampler → VAEDecode ─┬─► lineart_anime preprocessor ─► lineart
- (normal colour)      ├─► openpose preprocessor      ─► skeleton
+KSampler → VAEDecode ─┬─► AnimeLineArtPreprocessor → ImageInvert ─► lineart
+ (normal colour)      ├─► OpenposePreprocessor                   ─► skeleton
                       └─► source
 ```
 
-One extra pass, clean white-canvas output every time, instead of fighting the
-sampler for it.
+One extra pass, clean output every time, instead of fighting the sampler for
+it. Two lessons from the first real runs (`workflows/pose.json`):
+
+- **Preprocessors emit conditioning, not deliverables.** lineart_anime outputs
+  white-on-black (ControlNet input format); artists need black-on-white. The
+  `ImageInvert` between extract and save is load-bearing — don't "simplify" it
+  away.
+- **OpenPose finds nothing on multi-figure or chibi outputs** — it returns an
+  empty black canvas, not an error. The fix is prompt-side: `solo` in the
+  positive, `multiple views, reference sheet, chibi` in the negative. If
+  detection stays flaky on stylized bodies, `DWPreprocessor` is the upgrade
+  path (better generalization; needs onnxruntime, already pinned).
 
 ## Custom nodes are pinned
 
-`comfy/` pins the custom node versions (ComfyUI_IPAdapter_plus, controlnet_aux).
-A workflow referencing an unpinned node will work locally and fail in the container.
-If you add a node dependency, pin it in `comfy/` in the same change.
+`comfy/custom-nodes.txt` pins nodes by commit (`<repo-url> <sha>` per line) and
+is consumed by BOTH the Dockerfile and `run-native.sh` — one source, no drift.
+A workflow referencing an unpinned node will work locally and fail in the
+container. If you add a node dependency, pin it there in the same change.
+Two runtime realities: the native runner swaps `onnxruntime-gpu` for plain
+`onnxruntime` (the GPU build has no macOS wheels), and controlnet_aux
+preprocessors download their annotator weights (~200 MB each) on first use —
+the container needs network on the first pose run, or pre-warm after build.
 
 ## Before you submit
 
