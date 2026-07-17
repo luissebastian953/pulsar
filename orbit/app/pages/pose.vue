@@ -28,10 +28,11 @@ const camera = ref<string[]>([])
 const framing = ref<string[]>(['full_body'])
 const figure = reactive({ girls: 1, boys: 0 })
 
-function toggleIn(list: Ref<string[]>, tag: string) {
-  list.value = list.value.includes(tag)
-    ? list.value.filter(t => t !== tag)
-    : [...list.value, tag]
+// Template refs auto-unwrap, so this receives the raw array; mutate in place.
+function toggleIn(list: string[], tag: string) {
+  const i = list.indexOf(tag)
+  if (i === -1) list.push(tag)
+  else list.splice(i, 1)
 }
 
 const figTag = (n: number, word: string) => n === 1 ? `1${word}` : `${n}${word}s`

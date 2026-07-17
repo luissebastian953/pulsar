@@ -2,7 +2,7 @@
 
 export type TagCategory = 'general' | 'character' | 'copyright' | 'artist' | 'meta'
 
-export interface TranslatedTag {
+export type TranslatedTag = {
   canonical: string
   category: TagCategory
   count: number
@@ -10,18 +10,18 @@ export interface TranslatedTag {
   stage: 'exact' | 'alias' | 'fuzzy'
 }
 
-export interface TranslateResult {
+export type TranslateResult = {
   tags: TranslatedTag[]
   dropped: string[]
 }
 
-export interface TagSuggestion {
+export type TagSuggestion = {
   canonical: string
   category: TagCategory
   count: number
 }
 
-export interface GenerationRequest {
+export type GenerationRequest = {
   prompt: string
   negative?: string
   width?: number
@@ -34,7 +34,7 @@ export interface GenerationRequest {
   quality_tags?: boolean
 }
 
-export interface GenerationParams {
+export type GenerationParams = {
   prompt: string
   negative: string
   width: number
@@ -50,7 +50,7 @@ export interface GenerationParams {
 
 export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'blocked'
 
-export interface JobPayload {
+export type JobPayload = {
   id: string
   kind: string
   state: JobState

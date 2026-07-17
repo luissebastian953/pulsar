@@ -14,7 +14,7 @@ export function useApi() {
     token,
     get: <T>(path: string) =>
       $fetch<T>(`${apiBase}${path}`, { headers: headers() }),
-    post: <T>(path: string, body: unknown) =>
+    post: <T>(path: string, body: Record<string, unknown>) =>
       $fetch<T>(`${apiBase}${path}`, { method: 'POST', body, headers: headers() }),
     imageUrl: (path?: string) => (path ? `${apiBase}${path}` : ''),
   }
