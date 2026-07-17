@@ -29,3 +29,9 @@ eval/out/
 # model weights & generated images — never in git
 comfy/models/
 data/
+
+# comfy native-run state (run-native.sh)
+comfy/ComfyUI/
+comfy/output/
+comfy/input/
+comfy/.extra_model_paths.yaml

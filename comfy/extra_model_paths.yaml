@@ -1,0 +1,13 @@
+# Maps the mounted /models volume into ComfyUI's model search paths (docker
+# image only — run-native.sh generates its own copy with an absolute host path).
+# fetch-models.sh populates the directories.
+pulsar:
+  base_path: /models
+  checkpoints: checkpoints
+  vae: vae
+  loras: loras
+  embeddings: embeddings
+  controlnet: controlnet
+  clip_vision: clip_vision
+  ipadapter: ipadapter
+  upscale_models: upscale_models

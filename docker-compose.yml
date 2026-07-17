@@ -19,9 +19,13 @@ services:
   # Host port is localhost-only and for debugging — core is the only client.
   comfy:
     profiles: [gpu]
-    build: ./comfy   # Dockerfile + pinned custom nodes land with phase 1 GPU work
+    build: ./comfy
     ports:
       - "127.0.0.1:8188:8188"
+    volumes:
+      - ./comfy/models:/models   # populated by `make fetch-models`, shared with native runs
+      - comfy-data:/data
+    restart: unless-stopped
     deploy:
       resources:
         reservations:
@@ -56,3 +60,4 @@ services:
 
 volumes:
   pgdata:
+  comfy-data:
