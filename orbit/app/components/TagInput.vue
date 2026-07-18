@@ -42,7 +42,43 @@ const search = useDebounceFn(async (q: string) => {
   }
 }, 150)
 
-watch(query, q => search(q))
+// tag-name form: lowercase, trimmed, whitespace runs → single underscore
+// (matches core's tags.Normalize)
+function normalize(s: string) {
+  return s.trim().toLowerCase().split(/\s+/).join('_')
+}
+
+// commas commit tags — typed or pasted. Everything before the last comma
+// becomes chips (in ONE assignment, so a big paste doesn't lose segments to
+// reka's controlled-input reactivity); the trailing fragment stays in the
+// box for autocomplete.
+watch(query, (q) => {
+  if (q.includes(',')) {
+    const parts = q.split(',')
+    const tail = parts.pop() ?? ''
+    commitMany(parts)
+    query.value = tail
+    return
+  }
+  search(q)
+})
+
+function commitMany(raws: string[]) {
+  const existing = new Set(model.value)
+  const add: string[] = []
+  for (const raw of raws) {
+    const name = normalize(raw)
+    if (name && !existing.has(name)) {
+      existing.add(name)
+      add.push(name)
+    }
+  }
+  if (add.length) model.value = [...model.value, ...add]
+}
+
+function commit(raw: string) {
+  commitMany([raw])
+}
 
 function add(canonical: string) {
   if (canonical && !model.value.includes(canonical)) {
@@ -60,6 +96,14 @@ function remove(canonical: string) {
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Backspace' && !query.value && model.value.length) {
     model.value = model.value.slice(0, -1)
+  }
+  // Enter commits the raw token when no suggestion is highlighted, so a
+  // free-typed tag doesn't require an autocomplete hit
+  if (e.key === 'Enter' && query.value.trim() && !document.querySelector('[role="option"][data-highlighted]')) {
+    e.preventDefault()
+    commit(query.value)
+    query.value = ''
+    open.value = false
   }
 }
 </script>
