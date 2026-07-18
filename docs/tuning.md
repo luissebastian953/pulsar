@@ -63,8 +63,15 @@ the sheet; they're data, not failures.
 largest *perceived* quality jump for anime, because faces are small in frame and
 that's where people look. Costs a second pass. Default ON.
 
-**Hires fix** — generate at 1024, latent upscale, second KSampler @ denoise ~0.4.
-Fixes detail and anatomy. This is the premium high-res tier.
+**Hires fix** — built (`hires: true` on any non-pose kind; `patches/hires.json`).
+Generate → **pixel-space** lanczos 1.5× → re-encode → refine @ denoise 0.4.
+Empirical, from three live iterations: latent-space upscaling is a trap here —
+`nearest-exact` adds sharpening halos and `bislerp` produces horizontal
+streaking on MPS; pixel-space lanczos is clean. The "official-art finish"
+recipe: `hires: true, sampler: dpmpp_2m, scheduler: karras, cfg: 5.5` —
+smooth gradients and soft unbroken linework at 1248×1824. The fragment
+mirrors the base sampler's model/positive/negative links, so references and
+regional conditioning carry into the refine pass.
 
 ## Accuracy
 

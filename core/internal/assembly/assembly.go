@@ -24,8 +24,16 @@ type Request struct {
 	Denoise *float64 `json:"denoise,omitempty"`
 	// RefStrength is the Precise Reference fidelity (docs/precise-reference.md)
 	RefStrength *float64 `json:"ref_strength,omitempty"`
-	QualityTags *bool    `json:"quality_tags,omitempty"`
-	UCPreset    *bool    `json:"uc_preset,omitempty"`
+	// RefMode: "character" (default; alias "identity"), "style", or
+	// "character_style" (docs/precise-reference.md#mapping)
+	RefMode string `json:"ref_mode,omitempty"`
+	// RefFidelity 0..1 maps to the adapter's step range: how long the
+	// reference steers the denoise (NAI's Fidelity slider)
+	RefFidelity *float64 `json:"ref_fidelity,omitempty"`
+	// Hires: latent upscale 1.5x + refine pass (docs/tuning.md#quality-passes)
+	Hires       bool  `json:"hires,omitempty"`
+	QualityTags *bool `json:"quality_tags,omitempty"`
+	UCPreset    *bool `json:"uc_preset,omitempty"`
 	// Characters get regional conditioning: each prompt applies only to
 	// its own column (2–3 characters; the base prompt stays global).
 	Characters []Character `json:"characters,omitempty"`
@@ -53,6 +61,9 @@ type Spec struct {
 	Seed        int64       `json:"seed"`
 	Denoise     float64     `json:"denoise,omitempty"`
 	RefStrength float64     `json:"ref_strength,omitempty"`
+	RefMode     string      `json:"ref_mode,omitempty"`
+	RefFidelity float64     `json:"ref_fidelity,omitempty"`
+	Hires       bool        `json:"hires,omitempty"`
 	Characters  []Character `json:"characters,omitempty"`
 	BatchSize   int         `json:"batch_size"`
 	Lineage     string      `json:"lineage"`
@@ -200,6 +211,19 @@ func Build(req Request, opts Options) (Spec, error) {
 		}
 		s.RefStrength = *req.RefStrength
 	}
+	switch req.RefMode {
+	case "", "identity", "character", "style", "character_style":
+		s.RefMode = req.RefMode
+	default:
+		return Spec{}, fmt.Errorf("ref_mode must be character, style, or character_style")
+	}
+	if req.RefFidelity != nil {
+		if *req.RefFidelity < 0 || *req.RefFidelity > 1 {
+			return Spec{}, fmt.Errorf("ref_fidelity must be 0..1")
+		}
+		s.RefFidelity = *req.RefFidelity
+	}
+	s.Hires = req.Hires
 
 	if quality := strings.TrimSpace(opts.QualityTags); quality != "" && (req.QualityTags == nil || *req.QualityTags) {
 		s.Prompt = quality + ", " + prompt

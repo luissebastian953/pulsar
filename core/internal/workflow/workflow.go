@@ -200,7 +200,7 @@ func merge(graph json.RawMessage, frag *Fragment) (Graph, error) {
 
 // ApplyIPAdapter composes the reference fragment onto an already-built
 // graph, patching the reference filename and weight.
-func ApplyIPAdapter(graph json.RawMessage, frag *Fragment, refName string, weight float64) (json.RawMessage, error) {
+func ApplyIPAdapter(graph json.RawMessage, frag *Fragment, refName string, weight float64, weightType string, endAt float64) (json.RawMessage, error) {
 	g, err := merge(graph, frag)
 	if err != nil {
 		return nil, err
@@ -210,6 +210,35 @@ func ApplyIPAdapter(graph json.RawMessage, frag *Fragment, refName string, weigh
 	}
 	if err := g.Set(IPAdapter.Apply, "weight", weight); err != nil {
 		return nil, err
+	}
+	if weightType != "" {
+		if err := g.Set(IPAdapter.Apply, "weight_type", weightType); err != nil {
+			return nil, err
+		}
+	}
+	if err := g.Set(IPAdapter.Apply, "end_at", endAt); err != nil {
+		return nil, err
+	}
+	return json.Marshal(g)
+}
+
+// ApplyIPAdapterCS: the Character & Style chain — identity and
+// style-transfer adapters on the same reference, both at weight/endAt.
+func ApplyIPAdapterCS(graph json.RawMessage, frag *Fragment, refName string, weight, endAt float64) (json.RawMessage, error) {
+	g, err := merge(graph, frag)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.Set(IPAdapterCS.LoadRef, "image", refName); err != nil {
+		return nil, err
+	}
+	for _, node := range IPAdapterCS.Apply {
+		if err := g.Set(node, "weight", weight); err != nil {
+			return nil, err
+		}
+		if err := g.Set(node, "end_at", endAt); err != nil {
+			return nil, err
+		}
 	}
 	return json.Marshal(g)
 }
@@ -250,6 +279,36 @@ func ApplyIPAdapter2(graph json.RawMessage, frag *Fragment, refNames [2]string, 
 			return nil, err
 		}
 		if err := g.Set(IPAdapter2.Apply[i], "weight", weights[i]); err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(g)
+}
+
+// ApplyHires composes the refine pass LAST: it mirrors the base sampler's
+// model/positive/negative links so whatever fragments rewired them
+// (reference adapters, regional conditioning) carry into the second pass.
+func ApplyHires(graph json.RawMessage, frag *Fragment, spec assembly.Spec) (json.RawMessage, error) {
+	g, err := merge(graph, frag)
+	if err != nil {
+		return nil, err
+	}
+	base, ok := g[Txt2Img.Sampler]
+	if !ok {
+		return nil, fmt.Errorf("hires: base sampler missing")
+	}
+	steps := max(12, spec.Steps*3/5)
+	for input, value := range map[string]any{
+		"model":        base.Inputs["model"],
+		"positive":     base.Inputs["positive"],
+		"negative":     base.Inputs["negative"],
+		"seed":         spec.Seed,
+		"steps":        steps,
+		"cfg":          spec.CFG,
+		"sampler_name": spec.Sampler,
+		"scheduler":    spec.Scheduler,
+	} {
+		if err := g.Set(Hires.Sampler, input, value); err != nil {
 			return nil, err
 		}
 	}

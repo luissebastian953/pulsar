@@ -1,0 +1,76 @@
+{
+  "add": {
+    "62": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "5",
+          0
+        ],
+        "vae": [
+          "1",
+          2
+        ]
+      }
+    },
+    "63": {
+      "class_type": "ImageScaleBy",
+      "inputs": {
+        "image": [
+          "62",
+          0
+        ],
+        "upscale_method": "lanczos",
+        "scale_by": 1.5
+      }
+    },
+    "64": {
+      "class_type": "VAEEncode",
+      "inputs": {
+        "pixels": [
+          "63",
+          0
+        ],
+        "vae": [
+          "1",
+          2
+        ]
+      }
+    },
+    "61": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": [
+          "1",
+          0
+        ],
+        "positive": [
+          "2",
+          0
+        ],
+        "negative": [
+          "3",
+          0
+        ],
+        "latent_image": [
+          "64",
+          0
+        ],
+        "seed": 0,
+        "steps": 14,
+        "cfg": 6.0,
+        "sampler_name": "euler_ancestral",
+        "scheduler": "normal",
+        "denoise": 0.4
+      }
+    }
+  },
+  "set": {
+    "6": {
+      "samples": [
+        "61",
+        0
+      ]
+    }
+  }
+}

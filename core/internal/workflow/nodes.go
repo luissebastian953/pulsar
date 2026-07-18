@@ -17,8 +17,14 @@ const (
 	FragIPAdapter   = "patches/ipadapter.json"
 	IPAdapterSHA256 = "sha256:dbd6bba89c2810e8e487c3037252b5273bdec22226ecfdc3c15cd795c101c99b"
 
+	FragIPAdapterCS   = "patches/ipadapter_cs.json"
+	IPAdapterCSSHA256 = "sha256:d7c65ad132fb08651175410de4c091739c0040c27dc79bc8d46ec1a7aaffda08"
+
 	FragIPAdapter2   = "patches/ipadapter2.json"
 	IPAdapter2SHA256 = "sha256:25a85040643cde36e591f10abd7f598f795a1e2e0325b6957296018ea7deefb8"
+
+	FragHires   = "patches/hires.json"
+	HiresSHA256 = "sha256:3de5a80b08f6bb277ddc66f1ff86afdafbf198bfb80dea74c0f51e6855ef9b84"
 
 	FragRegional2   = "patches/regional2.json"
 	Regional2SHA256 = "sha256:9baeb495e5c3f1f8b91e72e9531fb9662c0df35c4e30505fd9cc3c76ea632460"
@@ -134,6 +140,13 @@ var IPAdapter = struct {
 	Apply:   "22",
 }
 
+// IPAdapterCS fragment: identity + style-transfer adapters chained on one
+// reference (NAI "Character & Style"); shares node IDs 20–23.
+var IPAdapterCS = struct {
+	LoadRef string
+	Apply   [2]string
+}{LoadRef: "20", Apply: [2]string{"22", "23"}}
+
 // IPAdapter2 fragment: two masked adapters chained (reserved 50–59); each
 // attn_mask reads the matching regional mask node, so this fragment only
 // composes AFTER regional2.
@@ -146,6 +159,13 @@ var IPAdapter2 = struct {
 	Apply:   [2]string{"51", "52"},
 	LoadRef: [2]string{"53", "54"},
 }
+
+// Hires fragment (reserved 60–69): pixel-space 1.5x upscale + refine pass
+// (latent upscaling streaks on MPS; lanczos in pixel space is robust).
+var Hires = struct {
+	Upscale string
+	Sampler string
+}{Upscale: "63", Sampler: "61"}
 
 // Regional fragment node IDs per character slot (reserved 30–49). The
 // masks are the shared masking subsystem's output — the same PNGs later
