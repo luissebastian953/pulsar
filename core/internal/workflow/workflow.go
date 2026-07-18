@@ -237,6 +237,25 @@ func ApplyRegional(graph json.RawMessage, frag *Fragment, maskNames, prompts []s
 	return json.Marshal(g)
 }
 
+// ApplyIPAdapter2 composes the per-character reference fragment (two
+// masked adapters on the regional masks), patching each slot's reference
+// filename and weight. Requires the regional2 fragment already applied.
+func ApplyIPAdapter2(graph json.RawMessage, frag *Fragment, refNames [2]string, weights [2]float64) (json.RawMessage, error) {
+	g, err := merge(graph, frag)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < 2; i++ {
+		if err := g.Set(IPAdapter2.LoadRef[i], "image", refNames[i]); err != nil {
+			return nil, err
+		}
+		if err := g.Set(IPAdapter2.Apply[i], "weight", weights[i]); err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(g)
+}
+
 // BuildPose: spine patches + extractor resolution at the render's short side.
 func BuildPose(tpl Graph, spec assembly.Spec, checkpoint string) (json.RawMessage, error) {
 	res := min(spec.Width, spec.Height)

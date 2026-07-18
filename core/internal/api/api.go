@@ -56,10 +56,11 @@ type Server struct {
 	Img2ImgTpl workflow.Graph // img2img base (LoadImage → VAEEncode), hash-verified at load
 	InpaintTpl workflow.Graph // inpaint base (img2img + noise mask), hash-verified at load
 	// fragments compose onto any built base (hash-verified)
-	IPAdapterFrag *workflow.Fragment
-	Regional2Frag *workflow.Fragment
-	Regional3Frag *workflow.Fragment
-	Cfg           Config
+	IPAdapterFrag  *workflow.Fragment
+	IPAdapter2Frag *workflow.Fragment
+	Regional2Frag  *workflow.Fragment
+	Regional3Frag  *workflow.Fragment
+	Cfg            Config
 }
 
 func (s *Server) Handler() http.Handler {
@@ -111,6 +112,32 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := workflow.OutputRoles(req.Kind); !ok {
 		httpError(w, http.StatusBadRequest, "unknown kind "+strconv.Quote(req.Kind))
 		return
+	}
+	charRefs := 0
+	for _, c := range req.Characters {
+		if c.ReferenceID != "" {
+			charRefs++
+		}
+	}
+	if charRefs > 0 {
+		switch {
+		case req.RefID != "":
+			httpError(w, http.StatusBadRequest, "use either a global reference or per-character references, not both")
+			return
+		case len(req.Characters) != 2 || charRefs != 2:
+			httpError(w, http.StatusBadRequest, "per-character references require exactly 2 characters, each with a reference")
+			return
+		}
+		for i, c := range req.Characters {
+			if !imageIDPattern.MatchString(c.ReferenceID) {
+				httpError(w, http.StatusBadRequest, fmt.Sprintf("character %d: invalid reference_id", i+1))
+				return
+			}
+			if _, _, err := s.blobDims(c.ReferenceID); err != nil {
+				httpError(w, http.StatusBadRequest, fmt.Sprintf("character %d: unknown reference_id", i+1))
+				return
+			}
+		}
 	}
 	if req.RefID != "" {
 		if req.Kind == "pose" {
@@ -245,6 +272,19 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			}
 			if err == nil {
 				graph, err = workflow.ApplyRegional(graph, frag, maskNames, prompts)
+			}
+			if err == nil && charRefs == 2 {
+				var refNames [2]string
+				var weights [2]float64
+				for i, c := range spec.Characters {
+					refNames[i] = c.ReferenceID + ".png"
+					weights[i] = 0.8
+					if c.RefStrength != nil {
+						weights[i] = *c.RefStrength
+					}
+					auxIDs = append(auxIDs, c.ReferenceID)
+				}
+				graph, err = workflow.ApplyIPAdapter2(graph, s.IPAdapter2Frag, refNames, weights)
 			}
 		}
 	}

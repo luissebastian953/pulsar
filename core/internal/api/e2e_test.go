@@ -80,6 +80,10 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ipa2, err := workflow.LoadFragment("../../../workflows", workflow.FragIPAdapter2, workflow.IPAdapter2SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	reg2, err := workflow.LoadFragment("../../../workflows", workflow.FragRegional2, workflow.Regional2SHA256)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +104,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, Regional2Frag: reg2, Regional3Frag: reg3,
+		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2, Regional2Frag: reg2, Regional3Frag: reg3,
 		Cfg: api.Config{
 			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
 			QualityTags:    "masterpiece, best quality",
@@ -521,6 +525,72 @@ func TestEndToEndRegional(t *testing.T) {
 	json.Unmarshal(v.Params, &spec)
 	if len(spec.Characters) != 2 || spec.Characters[0].Prompt != "blonde hair, red dress" {
 		t.Errorf("stored characters = %+v", spec.Characters)
+	}
+}
+
+// TestEndToEndPerCharacterReferences: the differentiator — each character
+// gets its own reference, masked to its own column, no blending.
+func TestEndToEndPerCharacterReferences(t *testing.T) {
+	e := newEnv(t, "e2e_charrefs", compliance.Stub{})
+	refA := e.uploadPNG(t, 100, 150)
+	refB := e.uploadPNG(t, 100, 150)
+
+	id := e.generate(t, `{"prompt": "2girls, park", "seed": 8, "characters": [
+		{"prompt": "blonde hair", "reference_id": "`+refA+`", "ref_strength": 0.9},
+		{"prompt": "black hair", "reference_id": "`+refB+`"}]}`)
+	v := e.waitTerminal(t, id)
+	if v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+	// both refs forwarded alongside the two masks
+	for _, name := range []string{refA + ".png", refB + ".png"} {
+		if _, ok := e.fake.Upload(name); !ok {
+			t.Errorf("%s not forwarded", name)
+		}
+	}
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	// per-slot refs and weights patched; explicit weight then the default
+	if got := g[workflow.IPAdapter2.LoadRef[0]].Inputs["image"]; got != refA+".png" {
+		t.Errorf("ref A = %v", got)
+	}
+	if got := g[workflow.IPAdapter2.Apply[0]].Inputs["weight"]; got != 0.9 {
+		t.Errorf("weight A = %v, want 0.9", got)
+	}
+	if got := g[workflow.IPAdapter2.Apply[1]].Inputs["weight"]; got != 0.8 {
+		t.Errorf("weight B = %v, want default 0.8", got)
+	}
+	// each adapter attends only its own column's mask
+	for i, wantMask := range []string{"31", "35"} {
+		ref, ok := g[workflow.IPAdapter2.Apply[i]].Inputs["attn_mask"].([]any)
+		if !ok || ref[0] != wantMask {
+			t.Errorf("adapter %d attn_mask = %v, want link to %s", i, g[workflow.IPAdapter2.Apply[i]].Inputs["attn_mask"], wantMask)
+		}
+	}
+	// KSampler model rides the chained adapters
+	ref, ok := g[workflow.Txt2Img.Sampler].Inputs["model"].([]any)
+	if !ok || ref[0] != workflow.IPAdapter2.Apply[1] {
+		t.Errorf("model = %v", g[workflow.Txt2Img.Sampler].Inputs["model"])
+	}
+}
+
+func TestPerCharacterReferenceRules(t *testing.T) {
+	e := newEnv(t, "e2e_charrefs_rules", compliance.Stub{})
+	ref := e.uploadPNG(t, 100, 150)
+	for name, body := range map[string]string{
+		"mixed global and per-char": `{"prompt": "2girls", "reference_id": "` + ref + `", "characters": [{"prompt": "a", "reference_id": "` + ref + `"}, {"prompt": "b", "reference_id": "` + ref + `"}]}`,
+		"only one char has ref":     `{"prompt": "2girls", "characters": [{"prompt": "a", "reference_id": "` + ref + `"}, {"prompt": "b"}]}`,
+	} {
+		resp, err := http.Post(e.ts.URL+"/generate", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", name, resp.StatusCode)
+		}
 	}
 }
 

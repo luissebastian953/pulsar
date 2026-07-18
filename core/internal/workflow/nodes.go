@@ -17,6 +17,9 @@ const (
 	FragIPAdapter   = "patches/ipadapter.json"
 	IPAdapterSHA256 = "sha256:dbd6bba89c2810e8e487c3037252b5273bdec22226ecfdc3c15cd795c101c99b"
 
+	FragIPAdapter2   = "patches/ipadapter2.json"
+	IPAdapter2SHA256 = "sha256:25a85040643cde36e591f10abd7f598f795a1e2e0325b6957296018ea7deefb8"
+
 	FragRegional2   = "patches/regional2.json"
 	Regional2SHA256 = "sha256:9baeb495e5c3f1f8b91e72e9531fb9662c0df35c4e30505fd9cc3c76ea632460"
 	FragRegional3   = "patches/regional3.json"
@@ -129,6 +132,19 @@ var IPAdapter = struct {
 	LoadRef: "20",
 	Loader:  "21",
 	Apply:   "22",
+}
+
+// IPAdapter2 fragment: two masked adapters chained (reserved 50–59); each
+// attn_mask reads the matching regional mask node, so this fragment only
+// composes AFTER regional2.
+var IPAdapter2 = struct {
+	Loader  string
+	Apply   [2]string
+	LoadRef [2]string
+}{
+	Loader:  "50",
+	Apply:   [2]string{"51", "52"},
+	LoadRef: [2]string{"53", "54"},
 }
 
 // Regional fragment node IDs per character slot (reserved 30–49). The

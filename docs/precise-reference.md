@@ -70,6 +70,24 @@ This is why the masking subsystem is shared between `regional.json` and
 `ipadapter.json`. Build it once. It's also the strongest single differentiator in
 the product.
 
+## Per-character references — status
+
+Built: `patches/ipadapter2.json` chains two masked `IPAdapterAdvanced` nodes,
+each `attn_mask` reading its character's regional column mask — requires the
+regional path (exactly 2 characters, both with `reference_id`; global and
+per-character references are mutually exclusive). Live results on
+Illustrious:
+
+- **Identity binding works and never cross-blends** — each column carries
+  its own reference's hair/eyes/outfit. The core NAI-can't-do-this claim is
+  demonstrated.
+- **Composition stability is not yet tuned.** weight 0.6 → refs' plain
+  backgrounds swallowed the scene and a third figure grew in the mask seam;
+  weight 0.4 → scene recovered, identity held, but one figure rendered
+  partially. Different failure each run = sweep territory: weight 0.4–0.6 ×
+  seed × framing in `eval/` before exposing per-character fidelity in orbit
+  beyond the shared slider.
+
 ## Caveats — read before building
 
 **Don't use IP-Adapter FaceID for anime.** FaceID depends on InsightFace for face

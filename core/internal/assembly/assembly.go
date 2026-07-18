@@ -33,6 +33,10 @@ type Request struct {
 
 type Character struct {
 	Prompt string `json:"prompt"`
+	// ReferenceID is an upload id for a per-character Precise Reference;
+	// RefStrength is its fidelity (0–1.2, default applied at the API).
+	ReferenceID string   `json:"reference_id,omitempty"`
+	RefStrength *float64 `json:"ref_strength,omitempty"`
 }
 
 // Spec is the resolved parameter set, stored verbatim on the job row.
@@ -182,7 +186,12 @@ func Build(req Request, opts Options) (Spec, error) {
 			if p == "" {
 				return Spec{}, fmt.Errorf("character %d prompt is required", i+1)
 			}
-			s.Characters = append(s.Characters, Character{Prompt: p})
+			if c.RefStrength != nil && (*c.RefStrength < 0 || *c.RefStrength > 1.2) {
+				return Spec{}, fmt.Errorf("character %d ref_strength must be 0..1.2", i+1)
+			}
+			s.Characters = append(s.Characters, Character{
+				Prompt: p, ReferenceID: c.ReferenceID, RefStrength: c.RefStrength,
+			})
 		}
 	}
 	if req.RefStrength != nil {
