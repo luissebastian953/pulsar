@@ -174,9 +174,9 @@ func LoadFragment(dir, name, wantSHA256 string) (*Fragment, error) {
 	return &f, nil
 }
 
-// ApplyIPAdapter composes the reference fragment onto an already-built
-// graph, patching the reference filename and weight.
-func ApplyIPAdapter(graph json.RawMessage, frag *Fragment, refName string, weight float64) (json.RawMessage, error) {
+// merge composes a fragment onto a graph: nodes added collision-safe, then
+// the fragment's input rewires applied.
+func merge(graph json.RawMessage, frag *Fragment) (Graph, error) {
 	var g Graph
 	if err := json.Unmarshal(graph, &g); err != nil {
 		return nil, err
@@ -195,11 +195,44 @@ func ApplyIPAdapter(graph json.RawMessage, frag *Fragment, refName string, weigh
 			}
 		}
 	}
+	return g, nil
+}
+
+// ApplyIPAdapter composes the reference fragment onto an already-built
+// graph, patching the reference filename and weight.
+func ApplyIPAdapter(graph json.RawMessage, frag *Fragment, refName string, weight float64) (json.RawMessage, error) {
+	g, err := merge(graph, frag)
+	if err != nil {
+		return nil, err
+	}
 	if err := g.Set(IPAdapter.LoadRef, "image", refName); err != nil {
 		return nil, err
 	}
 	if err := g.Set(IPAdapter.Apply, "weight", weight); err != nil {
 		return nil, err
+	}
+	return json.Marshal(g)
+}
+
+// ApplyRegional composes a regional fragment, patching each character
+// slot's mask filename and prompt. len(maskNames) == len(prompts) must
+// match the fragment's slot count (regional2 ↔ 2, regional3 ↔ 3).
+func ApplyRegional(graph json.RawMessage, frag *Fragment, maskNames, prompts []string) (json.RawMessage, error) {
+	if len(maskNames) != len(prompts) || len(prompts) > len(RegionalSlots) {
+		return nil, fmt.Errorf("regional: %d masks / %d prompts", len(maskNames), len(prompts))
+	}
+	g, err := merge(graph, frag)
+	if err != nil {
+		return nil, err
+	}
+	for i := range prompts {
+		slot := RegionalSlots[i]
+		if err := g.Set(slot.LoadMask, "image", maskNames[i]); err != nil {
+			return nil, err
+		}
+		if err := g.Set(slot.Text, "text", prompts[i]); err != nil {
+			return nil, err
+		}
 	}
 	return json.Marshal(g)
 }

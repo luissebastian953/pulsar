@@ -80,6 +80,17 @@ func TestPromptRejection(t *testing.T) {
 	}
 }
 
+func TestPromptRejectionScansCharacters(t *testing.T) {
+	s := NewSentinel("http://unused", forbidden, 0, 0)
+	dec, err := s.CheckPrompt(context.Background(), assembly.Spec{
+		Prompt:     "masterpiece, 2girls",
+		Characters: []assembly.Character{{Prompt: "blonde hair"}, {Prompt: "loli, smile"}},
+	})
+	if err != nil || dec.Allowed {
+		t.Errorf("forbidden tag in character prompt must reject: %+v, %v", dec, err)
+	}
+}
+
 func TestSentinelDownFailsClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)

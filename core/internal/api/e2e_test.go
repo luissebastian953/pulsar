@@ -80,6 +80,14 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reg2, err := workflow.LoadFragment("../../../workflows", workflow.FragRegional2, workflow.Regional2SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg3, err := workflow.LoadFragment("../../../workflows", workflow.FragRegional3, workflow.Regional3SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	broker := job.NewBroker()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -92,7 +100,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag,
+		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, Regional2Frag: reg2, Regional3Frag: reg3,
 		Cfg: api.Config{
 			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
 			QualityTags:    "masterpiece, best quality",
@@ -471,6 +479,61 @@ func TestReferenceComposesOnImg2Img(t *testing.T) {
 	json.Unmarshal(e.fake.LastGraph(), &g)
 	if got := g[workflow.IPAdapter.Apply].Inputs["weight"]; got != 0.8 {
 		t.Errorf("default weight = %v, want 0.8", got)
+	}
+}
+
+// TestEndToEndRegional: two characters, auto column masks generated
+// server-side, forwarded, and wired into per-region conditioning.
+func TestEndToEndRegional(t *testing.T) {
+	e := newEnv(t, "e2e_regional", compliance.Stub{})
+	id := e.generate(t, `{"prompt": "2girls, park", "seed": 6, "characters": [{"prompt": "blonde hair, red dress"}, {"prompt": "black hair, blue jacket"}]}`)
+	v := e.waitTerminal(t, id)
+	if v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	// per-slot prompts wired, masks forwarded under their patched names
+	for i, want := range []string{"blonde hair, red dress", "black hair, blue jacket"} {
+		slot := workflow.RegionalSlots[i]
+		if got := g[slot.Text].Inputs["text"]; got != want {
+			t.Errorf("slot %d text = %v", i, got)
+		}
+		name, _ := g[slot.LoadMask].Inputs["image"].(string)
+		data, ok := e.fake.Upload(name)
+		if !ok {
+			t.Fatalf("mask %s not forwarded", name)
+		}
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil || cfg.Width != 832 || cfg.Height != 1216 {
+			t.Errorf("mask %d dims %dx%d %v", i, cfg.Width, cfg.Height, err)
+		}
+	}
+	// KSampler positive rewired to the combine chain
+	ref, ok := g[workflow.Txt2Img.Sampler].Inputs["positive"].([]any)
+	if !ok || ref[0] != "39" {
+		t.Errorf("positive = %v, want link to 39", g[workflow.Txt2Img.Sampler].Inputs["positive"])
+	}
+	// resolved params store the characters
+	var spec assembly.Spec
+	json.Unmarshal(v.Params, &spec)
+	if len(spec.Characters) != 2 || spec.Characters[0].Prompt != "blonde hair, red dress" {
+		t.Errorf("stored characters = %+v", spec.Characters)
+	}
+}
+
+func TestRegionalValidation(t *testing.T) {
+	e := newEnv(t, "e2e_regional_val", compliance.Stub{})
+	resp, err := http.Post(e.ts.URL+"/generate", "application/json",
+		strings.NewReader(`{"prompt": "1girl", "characters": [{"prompt": "solo"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("1 character = %d, want 400", resp.StatusCode)
 	}
 }
 

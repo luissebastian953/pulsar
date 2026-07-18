@@ -120,6 +120,24 @@ it. Two lessons from the first real runs (`workflows/pose.json`):
   detection stays flaky on stylized bodies, `DWPreprocessor` is the upgrade
   path (better generalization; needs onnxruntime, already pinned).
 
+## Regional characters — the empirical recipe
+
+`patches/regional2.json` / `regional3.json` give each character a column:
+mask → `ImageToMask` → `ConditioningSetMask` → `ConditioningCombine` chain
+into the KSampler positive; masks come from `internal/masks` (the shared
+masking subsystem — the same PNGs later feed per-character IP-Adapter
+`attn_mask`). Three findings from the first live runs:
+
+- **Figures must fill their columns or the conditioning leaks into the
+  background.** A wide portrait park scene painted the *road* red/blue and
+  huddled both girls in one column. Landscape bucket (1216×832) + tight
+  framing (`upper body`, `standing side by side`) puts one figure per
+  column and everything binds.
+- **Mask strength 1.0 loses to the scene prior** — character identity
+  drifts. 1.25 (the fragment default) holds identity without artifacts.
+- The base prompt stays global (scene, count, composition); per-character
+  prompts carry identity only.
+
 ## Custom nodes are pinned
 
 `comfy/custom-nodes.txt` pins nodes by commit (`<repo-url> <sha>` per line) and

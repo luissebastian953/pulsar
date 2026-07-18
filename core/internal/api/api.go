@@ -22,6 +22,7 @@ import (
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/ingest"
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/masks"
 	"pulsar/core/internal/nltag"
 	"pulsar/core/internal/tags"
 	"pulsar/core/internal/workflow"
@@ -54,8 +55,10 @@ type Server struct {
 	PoseTpl    workflow.Graph // pose base (spine + extraction), hash-verified at load
 	Img2ImgTpl workflow.Graph // img2img base (LoadImage → VAEEncode), hash-verified at load
 	InpaintTpl workflow.Graph // inpaint base (img2img + noise mask), hash-verified at load
-	// IPAdapterFrag composes Precise Reference onto any base (hash-verified)
+	// fragments compose onto any built base (hash-verified)
 	IPAdapterFrag *workflow.Fragment
+	Regional2Frag *workflow.Fragment
+	Regional3Frag *workflow.Fragment
 	Cfg           Config
 }
 
@@ -208,6 +211,43 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if err == nil && req.RefID != "" {
 		graph, err = workflow.ApplyIPAdapter(graph, s.IPAdapterFrag, req.RefID+".png", spec.RefStrength)
 	}
+	// regional characters: generate column masks (the shared masking
+	// subsystem), store them as aux blobs, compose the regional fragment
+	var auxIDs []string
+	if err == nil && len(spec.Characters) > 0 {
+		if req.Kind == "pose" {
+			httpError(w, http.StatusBadRequest, "characters do not apply to pose")
+			return
+		}
+		frag := s.Regional2Frag
+		if len(spec.Characters) == 3 {
+			frag = s.Regional3Frag
+		}
+		colMasks, merr := masks.Columns(len(spec.Characters), spec.Width, spec.Height, 0.06)
+		if merr != nil {
+			err = merr
+		} else {
+			maskNames := make([]string, 0, len(colMasks))
+			prompts := make([]string, 0, len(spec.Characters))
+			for i, m := range colMasks {
+				id, ierr := newUploadID()
+				if ierr != nil {
+					err = ierr
+					break
+				}
+				if perr := s.Blobs.Put(id, m); perr != nil {
+					err = perr
+					break
+				}
+				auxIDs = append(auxIDs, id)
+				maskNames = append(maskNames, id+".png")
+				prompts = append(prompts, spec.Characters[i].Prompt)
+			}
+			if err == nil {
+				graph, err = workflow.ApplyRegional(graph, frag, maskNames, prompts)
+			}
+		}
+	}
 	if err != nil {
 		log.Printf("api: build workflow: %v", err)
 		httpError(w, http.StatusInternalServerError, "workflow build failed")
@@ -219,7 +259,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "params marshal failed")
 		return
 	}
-	j, err := s.Store.Enqueue(r.Context(), req.Kind, params, graph, req.ImageID, req.MaskID, req.RefID)
+	j, err := s.Store.Enqueue(r.Context(), req.Kind, params, graph, req.ImageID, req.MaskID, req.RefID, auxIDs)
 	if err != nil {
 		log.Printf("api: enqueue: %v", err)
 		httpError(w, http.StatusInternalServerError, "enqueue failed")

@@ -26,24 +26,32 @@ type Request struct {
 	RefStrength *float64 `json:"ref_strength,omitempty"`
 	QualityTags *bool    `json:"quality_tags,omitempty"`
 	UCPreset    *bool    `json:"uc_preset,omitempty"`
+	// Characters get regional conditioning: each prompt applies only to
+	// its own column (2–3 characters; the base prompt stays global).
+	Characters []Character `json:"characters,omitempty"`
+}
+
+type Character struct {
+	Prompt string `json:"prompt"`
 }
 
 // Spec is the resolved parameter set, stored verbatim on the job row.
 // Same Seed + same Spec must reproduce the same image.
 type Spec struct {
-	Prompt      string  `json:"prompt"`
-	Negative    string  `json:"negative"`
-	Width       int     `json:"width"`
-	Height      int     `json:"height"`
-	Steps       int     `json:"steps"`
-	CFG         float64 `json:"cfg"`
-	Sampler     string  `json:"sampler"`
-	Scheduler   string  `json:"scheduler"`
-	Seed        int64   `json:"seed"`
-	Denoise     float64 `json:"denoise,omitempty"`
-	RefStrength float64 `json:"ref_strength,omitempty"`
-	BatchSize   int     `json:"batch_size"`
-	Lineage     string  `json:"lineage"`
+	Prompt      string      `json:"prompt"`
+	Negative    string      `json:"negative"`
+	Width       int         `json:"width"`
+	Height      int         `json:"height"`
+	Steps       int         `json:"steps"`
+	CFG         float64     `json:"cfg"`
+	Sampler     string      `json:"sampler"`
+	Scheduler   string      `json:"scheduler"`
+	Seed        int64       `json:"seed"`
+	Denoise     float64     `json:"denoise,omitempty"`
+	RefStrength float64     `json:"ref_strength,omitempty"`
+	Characters  []Character `json:"characters,omitempty"`
+	BatchSize   int         `json:"batch_size"`
+	Lineage     string      `json:"lineage"`
 }
 
 type Options struct {
@@ -164,6 +172,18 @@ func Build(req Request, opts Options) (Spec, error) {
 			return Spec{}, fmt.Errorf("denoise must be 0.05..0.95")
 		}
 		s.Denoise = *req.Denoise
+	}
+	if n := len(req.Characters); n != 0 {
+		if n < 2 || n > 3 {
+			return Spec{}, fmt.Errorf("characters must be 2..3 (one character belongs in the prompt)")
+		}
+		for i, c := range req.Characters {
+			p := strings.TrimSpace(c.Prompt)
+			if p == "" {
+				return Spec{}, fmt.Errorf("character %d prompt is required", i+1)
+			}
+			s.Characters = append(s.Characters, Character{Prompt: p})
+		}
 	}
 	if req.RefStrength != nil {
 		if *req.RefStrength < 0 || *req.RefStrength > 1.2 {

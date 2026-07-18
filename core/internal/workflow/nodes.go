@@ -17,6 +17,11 @@ const (
 	FragIPAdapter   = "patches/ipadapter.json"
 	IPAdapterSHA256 = "sha256:dbd6bba89c2810e8e487c3037252b5273bdec22226ecfdc3c15cd795c101c99b"
 
+	FragRegional2   = "patches/regional2.json"
+	Regional2SHA256 = "sha256:9baeb495e5c3f1f8b91e72e9531fb9662c0df35c4e30505fd9cc3c76ea632460"
+	FragRegional3   = "patches/regional3.json"
+	Regional3SHA256 = "sha256:b9c58a37503f6fa0f5dbb707284a0f5ccc016267b377a29a2a26cd0953be41c4"
+
 	TplInpaint    = "inpaint.json"
 	InpaintSHA256 = "sha256:e1323578c44df103a93f5f9fdde55143fa8498ada345584007399a499d93c3d7"
 )
@@ -124,6 +129,20 @@ var IPAdapter = struct {
 	LoadRef: "20",
 	Loader:  "21",
 	Apply:   "22",
+}
+
+// Regional fragment node IDs per character slot (reserved 30–49). The
+// masks are the shared masking subsystem's output — the same PNGs later
+// feed per-character IP-Adapter attn_mask.
+type RegionalSlot struct {
+	LoadMask string
+	Text     string
+}
+
+var RegionalSlots = []RegionalSlot{
+	{LoadMask: "30", Text: "32"},
+	{LoadMask: "34", Text: "36"},
+	{LoadMask: "40", Text: "42"},
 }
 
 // OutputRoles: kind → role → SaveImage node; role "" is the primary

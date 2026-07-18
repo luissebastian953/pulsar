@@ -64,13 +64,20 @@ func NewSentinel(url, forbiddenUC string, threshold, sumGate float64) *Sentinel 
 	}
 }
 
-// CheckPrompt rejects positive prompts that ask for forbidden content.
+// CheckPrompt rejects positive prompts — global and per-character — that
+// ask for forbidden content.
 func (s *Sentinel) CheckPrompt(_ context.Context, spec assembly.Spec) (Decision, error) {
-	for _, part := range strings.Split(spec.Prompt, ",") {
-		name := tags.Normalize(part)
-		for _, w := range s.watch {
-			if name == w {
-				return Decision{Allowed: false, Reason: "forbidden tag in prompt: " + name}, nil
+	prompts := []string{spec.Prompt}
+	for _, c := range spec.Characters {
+		prompts = append(prompts, c.Prompt)
+	}
+	for _, p := range prompts {
+		for _, part := range strings.Split(p, ",") {
+			name := tags.Normalize(part)
+			for _, w := range s.watch {
+				if name == w {
+					return Decision{Allowed: false, Reason: "forbidden tag in prompt: " + name}, nil
+				}
 			}
 		}
 	}

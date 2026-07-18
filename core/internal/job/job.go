@@ -39,9 +39,10 @@ func (s State) Terminal() bool {
 type Job struct {
 	ID         string
 	Kind       string
-	InputPath  string // blob id of the uploaded input (image-input kinds)
-	MaskPath   string // blob id of the inpaint mask (white = repaint)
-	RefPath    string // blob id of the Precise Reference image
+	InputPath  string   // blob id of the uploaded input (image-input kinds)
+	MaskPath   string   // blob id of the inpaint mask (white = repaint)
+	RefPath    string   // blob id of the Precise Reference image
+	AuxPaths   []string // server-generated inputs (regional masks)
 	State      State
 	Params     json.RawMessage
 	Workflow   json.RawMessage

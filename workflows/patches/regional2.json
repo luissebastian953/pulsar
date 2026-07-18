@@ -1,0 +1,17 @@
+{
+  "add": {
+    "30": { "class_type": "LoadImage", "inputs": { "image": "mask-a.png" } },
+    "31": { "class_type": "ImageToMask", "inputs": { "image": ["30", 0], "channel": "red" } },
+    "32": { "class_type": "CLIPTextEncode", "inputs": { "text": "", "clip": ["1", 1] } },
+    "33": { "class_type": "ConditioningSetMask", "inputs": { "conditioning": ["32", 0], "mask": ["31", 0], "strength": 1.25, "set_cond_area": "default" } },
+    "34": { "class_type": "LoadImage", "inputs": { "image": "mask-b.png" } },
+    "35": { "class_type": "ImageToMask", "inputs": { "image": ["34", 0], "channel": "red" } },
+    "36": { "class_type": "CLIPTextEncode", "inputs": { "text": "", "clip": ["1", 1] } },
+    "37": { "class_type": "ConditioningSetMask", "inputs": { "conditioning": ["36", 0], "mask": ["35", 0], "strength": 1.25, "set_cond_area": "default" } },
+    "38": { "class_type": "ConditioningCombine", "inputs": { "conditioning_1": ["2", 0], "conditioning_2": ["33", 0] } },
+    "39": { "class_type": "ConditioningCombine", "inputs": { "conditioning_1": ["38", 0], "conditioning_2": ["37", 0] } }
+  },
+  "set": {
+    "5": { "positive": ["39", 0] }
+  }
+}

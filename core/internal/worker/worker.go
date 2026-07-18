@@ -74,7 +74,7 @@ func (w *Worker) process(ctx context.Context, j *job.Job) {
 	}
 
 	var inputs []comfy.Input
-	for _, blobID := range []string{j.InputPath, j.MaskPath, j.RefPath} {
+	for _, blobID := range append([]string{j.InputPath, j.MaskPath, j.RefPath}, j.AuxPaths...) {
 		if blobID == "" {
 			continue
 		}

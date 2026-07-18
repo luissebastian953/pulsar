@@ -92,6 +92,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("load workflow fragment: %v", err)
 	}
+	reg2Frag, err := workflow.LoadFragment(workflowsDir, workflow.FragRegional2, workflow.Regional2SHA256)
+	if err != nil {
+		log.Fatalf("load workflow fragment: %v", err)
+	}
+	reg3Frag, err := workflow.LoadFragment(workflowsDir, workflow.FragRegional3, workflow.Regional3SHA256)
+	if err != nil {
+		log.Fatalf("load workflow fragment: %v", err)
+	}
 
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -193,7 +201,7 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag,
+			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag, Regional2Frag: reg2Frag, Regional3Frag: reg3Frag,
 			Cfg: api.Config{
 				Lineage: lineage, Checkpoint: checkpoint,
 				CORSOrigins:    splitNonEmpty(corsOrigins),
