@@ -10,7 +10,7 @@ const prompt = ref('')
 const mode = ref<'plain' | 'tags'>('plain')
 const tagList = ref<string[]>([])
 const und = ref('')
-const chars = ref<{ text: string, enabled: boolean }[]>([])
+const chars = ref<{ text: string, enabled: boolean, refId: string }[]>([])
 const aspect = ref<'portrait' | 'landscape' | 'square'>('portrait')
 const batch = ref(1)
 const steps = ref(24)
@@ -151,7 +151,7 @@ const job = useJob(addRecent)
 const extraJobs = [useJob(addRecent), useJob(addRecent), useJob(addRecent)]
 
 const activeChars = computed(() =>
-  chars.value.filter(c => c.enabled && c.text.trim()).map(c => c.text.trim()))
+  chars.value.filter(c => c.enabled && c.text.trim()))
 
 const promptText = computed(() => {
   const base = mode.value === 'plain'
@@ -161,7 +161,7 @@ const promptText = computed(() => {
   // a single character just merges into the prompt
   const merge = activeChars.value.length >= 2 && activeChars.value.length <= 3
     ? []
-    : activeChars.value
+    : activeChars.value.map(c => c.text.trim())
   return [...base, ...merge].join(', ')
 })
 
@@ -192,7 +192,13 @@ function generate() {
     req.ref_strength = charRefFidelity.value
   }
   if (activeChars.value.length >= 2 && activeChars.value.length <= 3) {
-    req.characters = activeChars.value.map(p => ({ prompt: p }))
+    // per-character references apply only when exactly two characters both
+    // have one (and no global reference is set) — core enforces the same
+    const cs = activeChars.value
+    const perCharRefs = cs.length === 2 && cs.every(c => c.refId) && !charRefId.value
+    req.characters = cs.map(c => perCharRefs
+      ? { prompt: c.text.trim(), reference_id: c.refId, ref_strength: charRefFidelity.value }
+      : { prompt: c.text.trim() })
   }
   const s = seedText.value.trim()
   if (/^\d+$/.test(s)) req.seed = Number(s)
@@ -274,12 +280,13 @@ const charBadge = computed(() =>
               :key="i"
               v-model:enabled="c.enabled"
               v-model:text="c.text"
+              v-model:ref-id="c.refId"
               :index="i"
               @remove="chars.splice(i, 1)"
             />
             <button
               class="focus-ring w-full cursor-pointer rounded-ctrl border border-dashed border-line-hi py-[9px] text-center text-[12.5px] text-dim hover:border-dim hover:text-text"
-              @click="chars.push({ text: '', enabled: true })"
+              @click="chars.push({ text: '', enabled: true, refId: '' })"
             >
               <span class="inline-flex items-center justify-center gap-1.5">
                 <Icon name="lucide:plus" :size="13" />Add character
