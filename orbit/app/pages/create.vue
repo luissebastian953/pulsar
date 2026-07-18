@@ -150,14 +150,19 @@ const job = useJob(addRecent)
 // pre-created pool so batch > 1 fires parallel jobs (core queues them)
 const extraJobs = [useJob(addRecent), useJob(addRecent), useJob(addRecent)]
 
+const activeChars = computed(() =>
+  chars.value.filter(c => c.enabled && c.text.trim()).map(c => c.text.trim()))
+
 const promptText = computed(() => {
   const base = mode.value === 'plain'
     ? translate.tags.value.map(t => t.canonical)
     : tagList.value
-  const charText = chars.value
-    .filter(c => c.enabled && c.text.trim())
-    .map(c => c.text.trim())
-  return [...base, ...charText].join(', ')
+  // 2-3 characters go regional (each prompt conditions its own column);
+  // a single character just merges into the prompt
+  const merge = activeChars.value.length >= 2 && activeChars.value.length <= 3
+    ? []
+    : activeChars.value
+  return [...base, ...merge].join(', ')
 })
 
 const cost = computed(() => batch.value * (17 + (hires.value ? 8 : 0)))
@@ -185,6 +190,9 @@ function generate() {
   if (charRefId.value) {
     req.reference_id = charRefId.value
     req.ref_strength = charRefFidelity.value
+  }
+  if (activeChars.value.length >= 2 && activeChars.value.length <= 3) {
+    req.characters = activeChars.value.map(p => ({ prompt: p }))
   }
   const s = seedText.value.trim()
   if (/^\d+$/.test(s)) req.seed = Number(s)

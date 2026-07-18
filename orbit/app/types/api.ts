@@ -47,6 +47,8 @@ export type GenerationRequest = {
   // Precise Reference: uploaded id + fidelity 0-1.2
   reference_id?: string
   ref_strength?: number
+  // 2-3 entries: each prompt conditions its own column (regional)
+  characters?: { prompt: string }[]
   prompt: string
   negative?: string
   width?: number
