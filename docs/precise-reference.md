@@ -70,6 +70,14 @@ This is why the masking subsystem is shared between `regional.json` and
 `ipadapter.json`. Build it once. It's also the strongest single differentiator in
 the product.
 
+## Style mode — status
+
+`ref_mode: "style"` maps to `weight_type: style transfer` as designed. First
+live test at weight 0.7 over-injected: scratchy overdrawn linework and eye
+color drift. Treat as experimental until an eval sweep finds the weight band
+(likely ≤0.5); for "official-art finish" the hires pass alone
+(docs/tuning.md#quality-passes) got there without a style reference.
+
 ## Per-character references — status
 
 Built: `patches/ipadapter2.json` chains two masked `IPAdapterAdvanced` nodes,

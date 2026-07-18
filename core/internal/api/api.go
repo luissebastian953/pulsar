@@ -56,11 +56,13 @@ type Server struct {
 	Img2ImgTpl workflow.Graph // img2img base (LoadImage → VAEEncode), hash-verified at load
 	InpaintTpl workflow.Graph // inpaint base (img2img + noise mask), hash-verified at load
 	// fragments compose onto any built base (hash-verified)
-	IPAdapterFrag  *workflow.Fragment
-	IPAdapter2Frag *workflow.Fragment
-	Regional2Frag  *workflow.Fragment
-	Regional3Frag  *workflow.Fragment
-	Cfg            Config
+	IPAdapterFrag   *workflow.Fragment
+	IPAdapter2Frag  *workflow.Fragment
+	IPAdapterCSFrag *workflow.Fragment
+	Regional2Frag   *workflow.Fragment
+	HiresFrag       *workflow.Fragment
+	Regional3Frag   *workflow.Fragment
+	Cfg             Config
 }
 
 func (s *Server) Handler() http.Handler {
@@ -156,6 +158,10 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			d := 0.8 // strong identity, still promptable (docs/precise-reference.md)
 			req.RefStrength = &d
 		}
+		if req.RefFidelity == nil {
+			f := 0.5 // → end_at 0.7, the live-tuned default
+			req.RefFidelity = &f
+		}
 	}
 	if req.Kind == "img2img" || req.Kind == "inpaint" {
 		if !imageIDPattern.MatchString(req.ImageID) {
@@ -236,10 +242,17 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		graph, err = workflow.BuildTxt2Img(s.Tpl, spec, s.Cfg.Checkpoint)
 	}
 	if err == nil && req.RefID != "" {
-		graph, err = workflow.ApplyIPAdapter(graph, s.IPAdapterFrag, req.RefID+".png", spec.RefStrength)
+		// fidelity → step range: how long the reference steers the denoise
+		endAt := 0.4 + 0.6*spec.RefFidelity
+		switch spec.RefMode {
+		case "character_style":
+			graph, err = workflow.ApplyIPAdapterCS(graph, s.IPAdapterCSFrag, req.RefID+".png", spec.RefStrength, endAt)
+		case "style":
+			graph, err = workflow.ApplyIPAdapter(graph, s.IPAdapterFrag, req.RefID+".png", spec.RefStrength, "style transfer", endAt)
+		default: // character / identity
+			graph, err = workflow.ApplyIPAdapter(graph, s.IPAdapterFrag, req.RefID+".png", spec.RefStrength, "", endAt)
+		}
 	}
-	// regional characters: generate column masks (the shared masking
-	// subsystem), store them as aux blobs, compose the regional fragment
 	var auxIDs []string
 	if err == nil && len(spec.Characters) > 0 {
 		if req.Kind == "pose" {
@@ -273,7 +286,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			if err == nil {
 				graph, err = workflow.ApplyRegional(graph, frag, maskNames, prompts)
 			}
-			if err == nil && charRefs == 2 {
+			if err == nil && charRefs == 2 { // per-char refs need the regional masks
 				var refNames [2]string
 				var weights [2]float64
 				for i, c := range spec.Characters {
@@ -290,6 +303,21 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("api: build workflow: %v", err)
+		httpError(w, http.StatusInternalServerError, "workflow build failed")
+		return
+	}
+
+	// hires last: it mirrors the base sampler's links, so every earlier
+	// fragment (reference, regional) carries into the refine pass
+	if err == nil && spec.Hires {
+		if req.Kind == "pose" {
+			httpError(w, http.StatusBadRequest, "hires does not apply to pose")
+			return
+		}
+		graph, err = workflow.ApplyHires(graph, s.HiresFrag, spec)
+	}
+	if err != nil {
+		log.Printf("api: compose fragments: %v", err)
 		httpError(w, http.StatusInternalServerError, "workflow build failed")
 		return
 	}

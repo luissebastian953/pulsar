@@ -80,9 +80,11 @@ Same checkpoint, same CLIP encodes, same sampler. `denoise` is the whole game:
 1.0 ignores the input, ~0.5–0.6 restructures while keeping composition, ~0.2–0.3
 refines only.
 
-**Hires fix and inpainting are img2img.** Hires = generate → latent upscale → second
+**Hires fix and inpainting are img2img.** Hires = generate → upscale → second
 KSampler @ denoise ~0.4. Inpaint = img2img + mask. If you understand the img2img
-diff, you understand three features.
+diff, you understand three features. Hires empirical: upscale in **pixel space**
+(lanczos), not latent — `nearest-exact` halos, `bislerp` streaks on MPS
+(docs/tuning.md#quality-passes).
 
 **v-pred requires `ModelSamplingDiscrete`** (v_prediction, zsnr=true). Without it,
 output is garbage — not degraded, garbage. Modern ComfyUI auto-detects v-pred

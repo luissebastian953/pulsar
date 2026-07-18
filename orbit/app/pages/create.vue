@@ -32,7 +32,9 @@ const refStrength = ref(0.6)
 // Precise Reference: character identity from an uploaded image
 const charRefId = ref('')
 const charRefPreview = ref('')
-const charRefFidelity = ref(0.8)
+const charRefMode = ref<'character_style' | 'character' | 'style'>('character_style')
+const charRefStrength = ref(0.8)
+const charRefFidelity = ref(0.5)
 const charRefError = ref('')
 
 async function onCharRefPick(e: Event) {
@@ -180,6 +182,7 @@ function generate() {
     sampler: sampler.value,
     scheduler: scheduler.value,
     quality_tags: qualityTags.value,
+    hires: hires.value || undefined,
   }
   if (i2iId.value) {
     req.kind = maskId.value ? 'inpaint' : 'img2img'
@@ -189,7 +192,9 @@ function generate() {
   }
   if (charRefId.value) {
     req.reference_id = charRefId.value
-    req.ref_strength = charRefFidelity.value
+    req.ref_mode = charRefMode.value
+    req.ref_strength = charRefStrength.value
+    req.ref_fidelity = charRefFidelity.value
   }
   if (activeChars.value.length >= 2 && activeChars.value.length <= 3) {
     // per-character references apply only when exactly two characters both
@@ -329,9 +334,19 @@ const charBadge = computed(() =>
                   <Icon name="lucide:x" :size="12" />
                 </button>
               </div>
-              <SliderRow v-model="charRefFidelity" label="Fidelity" :min="0" :max="1.2" :step="0.05" :decimals="2" />
+              <Dropdown
+                v-model="charRefMode"
+                :options="[
+                  { value: 'character_style', label: 'Character & Style' },
+                  { value: 'character', label: 'Character' },
+                  { value: 'style', label: 'Style' },
+                ]"
+              />
+              <SliderRow v-model="charRefStrength" label="Strength" :min="0" :max="1.2" :step="0.05" :decimals="2" />
+              <SliderRow v-model="charRefFidelity" label="Fidelity" :min="0" :max="1" :step="0.05" :decimals="2" />
               <div class="text-[11.5px] leading-relaxed text-faint">
-                ~0.5 loose, ~0.8 strong; above 1.0 the reference gets hard to override with words.
+                Strength: how hard the reference pushes (~0.5 loose, ~0.8 strong).
+                Fidelity: how long it steers — higher follows the reference into fine detail.
               </div>
             </template>
             <label

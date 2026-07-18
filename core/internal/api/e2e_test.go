@@ -80,6 +80,10 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ipaCS, err := workflow.LoadFragment("../../../workflows", workflow.FragIPAdapterCS, workflow.IPAdapterCSSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ipa2, err := workflow.LoadFragment("../../../workflows", workflow.FragIPAdapter2, workflow.IPAdapter2SHA256)
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +93,10 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 		t.Fatal(err)
 	}
 	reg3, err := workflow.LoadFragment("../../../workflows", workflow.FragRegional3, workflow.Regional3SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hires, err := workflow.LoadFragment("../../../workflows", workflow.FragHires, workflow.HiresSHA256)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +112,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2, Regional2Frag: reg2, Regional3Frag: reg3,
+		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2, IPAdapterCSFrag: ipaCS, Regional2Frag: reg2, Regional3Frag: reg3, HiresFrag: hires,
 		Cfg: api.Config{
 			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
 			QualityTags:    "masterpiece, best quality",
@@ -576,6 +584,38 @@ func TestEndToEndPerCharacterReferences(t *testing.T) {
 	}
 }
 
+// TestCharacterStyleMode: the NAI "Character & Style" chain — identity +
+// style-transfer adapters on one reference, fidelity mapped to end_at.
+func TestCharacterStyleMode(t *testing.T) {
+	e := newEnv(t, "e2e_csmode", compliance.Stub{})
+	ref := e.uploadPNG(t, 100, 150)
+	id := e.generate(t, `{"prompt": "1girl", "seed": 14, "reference_id": "`+ref+`", "ref_mode": "character_style", "ref_strength": 0.6, "ref_fidelity": 1.0}`)
+	if v := e.waitTerminal(t, id); v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	types := map[string]bool{}
+	for _, node := range workflow.IPAdapterCS.Apply {
+		wt, _ := g[node].Inputs["weight_type"].(string)
+		types[wt] = true
+		if got := g[node].Inputs["weight"]; got != 0.6 {
+			t.Errorf("node %s weight = %v", node, got)
+		}
+		if got := g[node].Inputs["end_at"]; got != 1.0 {
+			t.Errorf("node %s end_at = %v, want 1.0 (fidelity 1)", node, got)
+		}
+	}
+	if !types["linear"] || !types["style transfer"] {
+		t.Errorf("chain types = %v, want linear + style transfer", types)
+	}
+	if m, ok := g[workflow.Txt2Img.Sampler].Inputs["model"].([]any); !ok || m[0] != workflow.IPAdapterCS.Apply[1] {
+		t.Errorf("model = %v", g[workflow.Txt2Img.Sampler].Inputs["model"])
+	}
+}
+
 func TestPerCharacterReferenceRules(t *testing.T) {
 	e := newEnv(t, "e2e_charrefs_rules", compliance.Stub{})
 	ref := e.uploadPNG(t, 100, 150)
@@ -591,6 +631,38 @@ func TestPerCharacterReferenceRules(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("%s = %d, want 400", name, resp.StatusCode)
 		}
+	}
+}
+
+// TestEndToEndHiresAndStyle: hires mirrors the base sampler's links so the
+// style-mode reference adapter carries into the refine pass.
+func TestEndToEndHiresAndStyle(t *testing.T) {
+	e := newEnv(t, "e2e_hires", compliance.Stub{})
+	ref := e.uploadPNG(t, 100, 150)
+	id := e.generate(t, `{"prompt": "1girl, cafe", "seed": 12, "hires": true, "reference_id": "`+ref+`", "ref_mode": "style", "ref_strength": 0.7}`)
+	if v := e.waitTerminal(t, id); v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g[workflow.IPAdapter.Apply].Inputs["weight_type"]; got != "style transfer" {
+		t.Errorf("weight_type = %v", got)
+	}
+	// default fidelity 0.5 → end_at 0.7
+	if got := g[workflow.IPAdapter.Apply].Inputs["end_at"]; got != 0.7 {
+		t.Errorf("end_at = %v, want 0.7", got)
+	}
+	// decode reads the refine sampler, whose model rides the adapter
+	if ref2, ok := g["6"].Inputs["samples"].([]any); !ok || ref2[0] != workflow.Hires.Sampler {
+		t.Errorf("decode samples = %v", g["6"].Inputs["samples"])
+	}
+	if m, ok := g[workflow.Hires.Sampler].Inputs["model"].([]any); !ok || m[0] != workflow.IPAdapter.Apply {
+		t.Errorf("hires model = %v, want adapter chain", g[workflow.Hires.Sampler].Inputs["model"])
+	}
+	if got := g[workflow.Hires.Sampler].Inputs["denoise"]; got != 0.4 {
+		t.Errorf("hires denoise = %v", got)
 	}
 }
 

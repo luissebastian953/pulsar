@@ -92,6 +92,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("load workflow fragment: %v", err)
 	}
+	ipaCSFrag, err := workflow.LoadFragment(workflowsDir, workflow.FragIPAdapterCS, workflow.IPAdapterCSSHA256)
+	if err != nil {
+		log.Fatalf("load workflow fragment: %v", err)
+	}
 	ipa2Frag, err := workflow.LoadFragment(workflowsDir, workflow.FragIPAdapter2, workflow.IPAdapter2SHA256)
 	if err != nil {
 		log.Fatalf("load workflow fragment: %v", err)
@@ -101,6 +105,10 @@ func main() {
 		log.Fatalf("load workflow fragment: %v", err)
 	}
 	reg3Frag, err := workflow.LoadFragment(workflowsDir, workflow.FragRegional3, workflow.Regional3SHA256)
+	if err != nil {
+		log.Fatalf("load workflow fragment: %v", err)
+	}
+	hiresFrag, err := workflow.LoadFragment(workflowsDir, workflow.FragHires, workflow.HiresSHA256)
 	if err != nil {
 		log.Fatalf("load workflow fragment: %v", err)
 	}
@@ -205,7 +213,7 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2Frag, Regional2Frag: reg2Frag, Regional3Frag: reg3Frag,
+			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2Frag, IPAdapterCSFrag: ipaCSFrag, Regional2Frag: reg2Frag, HiresFrag: hiresFrag, Regional3Frag: reg3Frag,
 			Cfg: api.Config{
 				Lineage: lineage, Checkpoint: checkpoint,
 				CORSOrigins:    splitNonEmpty(corsOrigins),

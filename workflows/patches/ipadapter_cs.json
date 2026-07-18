@@ -1,0 +1,11 @@
+{
+  "add": {
+    "20": { "class_type": "LoadImage", "inputs": { "image": "reference.png" } },
+    "21": { "class_type": "IPAdapterUnifiedLoader", "inputs": { "model": ["1", 0], "preset": "PLUS (high strength)" } },
+    "22": { "class_type": "IPAdapterAdvanced", "inputs": { "model": ["21", 0], "ipadapter": ["21", 1], "image": ["20", 0], "weight": 0.8, "weight_type": "linear", "combine_embeds": "concat", "start_at": 0.0, "end_at": 0.7, "embeds_scaling": "V only" } },
+    "23": { "class_type": "IPAdapterAdvanced", "inputs": { "model": ["22", 0], "ipadapter": ["21", 1], "image": ["20", 0], "weight": 0.8, "weight_type": "style transfer", "combine_embeds": "concat", "start_at": 0.0, "end_at": 0.7, "embeds_scaling": "V only" } }
+  },
+  "set": {
+    "5": { "model": ["23", 0] }
+  }
+}
