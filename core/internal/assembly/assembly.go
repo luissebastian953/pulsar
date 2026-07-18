@@ -37,6 +37,13 @@ type Request struct {
 	// Characters get regional conditioning: each prompt applies only to
 	// its own column (2–3 characters; the base prompt stays global).
 	Characters []Character `json:"characters,omitempty"`
+	// Loras apply a style/character LoRA on the spine (one for now).
+	Loras []Lora `json:"loras,omitempty"`
+}
+
+type Lora struct {
+	Name     string   `json:"name"`
+	Strength *float64 `json:"strength,omitempty"`
 }
 
 type Character struct {
@@ -65,6 +72,7 @@ type Spec struct {
 	RefFidelity float64     `json:"ref_fidelity,omitempty"`
 	Hires       bool        `json:"hires,omitempty"`
 	Characters  []Character `json:"characters,omitempty"`
+	Loras       []Lora      `json:"loras,omitempty"`
 	BatchSize   int         `json:"batch_size"`
 	Lineage     string      `json:"lineage"`
 }
@@ -224,6 +232,22 @@ func Build(req Request, opts Options) (Spec, error) {
 		s.RefFidelity = *req.RefFidelity
 	}
 	s.Hires = req.Hires
+	if len(req.Loras) > 1 {
+		return Spec{}, fmt.Errorf("multiple LoRAs not yet supported")
+	}
+	for _, l := range req.Loras {
+		if strings.TrimSpace(l.Name) == "" {
+			return Spec{}, fmt.Errorf("lora name is required")
+		}
+		st := 0.8
+		if l.Strength != nil {
+			if *l.Strength < 0 || *l.Strength > 1.5 {
+				return Spec{}, fmt.Errorf("lora strength must be 0..1.5")
+			}
+			st = *l.Strength
+		}
+		s.Loras = append(s.Loras, Lora{Name: l.Name, Strength: &st})
+	}
 
 	if quality := strings.TrimSpace(opts.QualityTags); quality != "" && (req.QualityTags == nil || *req.QualityTags) {
 		s.Prompt = quality + ", " + prompt

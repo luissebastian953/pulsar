@@ -100,6 +100,10 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lora, err := workflow.LoadFragment("../../../workflows", workflow.FragLora, workflow.LoraSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	broker := job.NewBroker()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -112,7 +116,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2, IPAdapterCSFrag: ipaCS, Regional2Frag: reg2, Regional3Frag: reg3, HiresFrag: hires,
+		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2, IPAdapterCSFrag: ipaCS, Regional2Frag: reg2, Regional3Frag: reg3, HiresFrag: hires, LoraFrag: lora,
 		Cfg: api.Config{
 			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
 			QualityTags:    "masterpiece, best quality",
@@ -663,6 +667,47 @@ func TestEndToEndHiresAndStyle(t *testing.T) {
 	}
 	if got := g[workflow.Hires.Sampler].Inputs["denoise"]; got != 0.4 {
 		t.Errorf("hires denoise = %v", got)
+	}
+}
+
+// TestEndToEndLora: a LoRA composes onto the spine — loader patched, and
+// the sampler + text encoders route through it.
+func TestEndToEndLora(t *testing.T) {
+	e := newEnv(t, "e2e_lora", compliance.Stub{})
+	id := e.generate(t, `{"prompt": "1girl", "seed": 15, "loras": [{"name": "style.safetensors", "strength": 0.7}]}`)
+	if v := e.waitTerminal(t, id); v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g[workflow.Lora.Loader].Inputs["lora_name"]; got != "style.safetensors" {
+		t.Errorf("lora_name = %v", got)
+	}
+	if got := g[workflow.Lora.Loader].Inputs["strength_model"]; got != 0.7 {
+		t.Errorf("strength = %v", got)
+	}
+	// sampler model and both text encoders route through the loader
+	if m, ok := g[workflow.Txt2Img.Sampler].Inputs["model"].([]any); !ok || m[0] != workflow.Lora.Loader {
+		t.Errorf("sampler model = %v", g[workflow.Txt2Img.Sampler].Inputs["model"])
+	}
+	if c, ok := g[workflow.Txt2Img.Positive].Inputs["clip"].([]any); !ok || c[0] != workflow.Lora.Loader {
+		t.Errorf("positive clip = %v", g[workflow.Txt2Img.Positive].Inputs["clip"])
+	}
+}
+
+func TestLoraRejectsWithReference(t *testing.T) {
+	e := newEnv(t, "e2e_lora_ref", compliance.Stub{})
+	ref := e.uploadPNG(t, 100, 150)
+	resp, err := http.Post(e.ts.URL+"/generate", "application/json",
+		strings.NewReader(`{"prompt": "1girl", "reference_id": "`+ref+`", "loras": [{"name": "x.safetensors"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("lora+reference = %d, want 400", resp.StatusCode)
 	}
 }
 

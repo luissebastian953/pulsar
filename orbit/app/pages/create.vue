@@ -21,6 +21,9 @@ const scheduler = ref('karras')
 const qualityTags = ref(true)
 const faceDetail = ref(true)
 const hires = ref(false)
+const loras = ref<string[]>([])
+const loraName = ref('')
+const loraStrength = ref(0.8)
 
 const folds = reactive({ und: false, chars: false, ref: false, i2i: false, adv: false })
 
@@ -184,6 +187,9 @@ function generate() {
     quality_tags: qualityTags.value,
     hires: hires.value || undefined,
   }
+  if (loraName.value) {
+    req.loras = [{ name: loraName.value, strength: loraStrength.value }]
+  }
   if (i2iId.value) {
     req.kind = maskId.value ? 'inpaint' : 'img2img'
     req.image_id = i2iId.value
@@ -217,6 +223,11 @@ function openRecent(item: RecentItem) {
 }
 
 onMounted(async () => {
+  try {
+    const lr = await api.get<{ loras: string[] }>('/loras')
+    loras.value = lr.loras
+  }
+  catch { /* no loras endpoint or none installed */ }
   try {
     const res = await api.get<{ jobs: JobPayload[] }>('/history')
     recent.value = res.jobs
@@ -479,7 +490,16 @@ const charBadge = computed(() =>
             </div>
             <div class="flex items-center">
               <span class="flex-1 text-xs text-dim">High resolution</span>
-              <ToggleSwitch v-model="hires" title="Wired when the hires workflow lands" />
+              <ToggleSwitch v-model="hires" title="Pixel-space upscale + refine pass for a smoother finish" />
+            </div>
+            <div v-if="loras.length" class="border-t border-line pt-3">
+              <div class="mb-[5px] text-xs text-dim">Style / character LoRA</div>
+              <Dropdown
+                v-model="loraName"
+                aria-label="LoRA"
+                :options="[{ value: '', label: 'None' }, ...loras.map(l => ({ value: l, label: l.replace(/\.(safetensors|pt)$/, '') }))]"
+              />
+              <SliderRow v-if="loraName" v-model="loraStrength" label="LoRA strength" :min="0" :max="1.5" :step="0.05" :decimals="2" class="mt-2" />
             </div>
             <div class="text-[11.5px] leading-relaxed text-faint">
               These defaults are set for {{ modelName }}. Switching models

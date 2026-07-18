@@ -23,6 +23,9 @@ const (
 	FragIPAdapter2   = "patches/ipadapter2.json"
 	IPAdapter2SHA256 = "sha256:25a85040643cde36e591f10abd7f598f795a1e2e0325b6957296018ea7deefb8"
 
+	FragLora   = "patches/lora.json"
+	LoraSHA256 = "sha256:2424741e63ed0fe10c09cc3312b45e7a8ab9ef5c619140a5416b56aaf126c78e"
+
 	FragHires   = "patches/hires.json"
 	HiresSHA256 = "sha256:3de5a80b08f6bb277ddc66f1ff86afdafbf198bfb80dea74c0f51e6855ef9b84"
 
@@ -159,6 +162,10 @@ var IPAdapter2 = struct {
 	Apply:   [2]string{"51", "52"},
 	LoadRef: [2]string{"53", "54"},
 }
+
+// Lora fragment (reserved 70): LoraLoader on the spine — model + clip flow
+// through it so both the sampler and the text encoders see the LoRA.
+var Lora = struct{ Loader string }{Loader: "70"}
 
 // Hires fragment (reserved 60–69): pixel-space 1.5x upscale + refine pass
 // (latent upscaling streaks on MPS; lanczos in pixel space is robust).

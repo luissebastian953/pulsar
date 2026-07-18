@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -60,9 +61,12 @@ type Server struct {
 	IPAdapter2Frag  *workflow.Fragment
 	IPAdapterCSFrag *workflow.Fragment
 	Regional2Frag   *workflow.Fragment
-	HiresFrag       *workflow.Fragment
 	Regional3Frag   *workflow.Fragment
-	Cfg             Config
+	HiresFrag       *workflow.Fragment
+	LoraFrag        *workflow.Fragment
+	// LoraDir lists installed LoRAs for GET /loras (empty = none listed).
+	LoraDir string
+	Cfg     Config
 }
 
 func (s *Server) Handler() http.Handler {
@@ -72,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /jobs/{id}/stream", s.handleStream)
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
 	mux.HandleFunc("POST /uploads", s.handleUpload)
+	mux.HandleFunc("GET /loras", s.handleLoras)
 	mux.HandleFunc("GET /tags", s.handleTags)
 	mux.HandleFunc("GET /tags/lookup", s.handleTagLookup)
 	mux.HandleFunc("POST /translate", s.handleTranslate)
@@ -307,8 +312,16 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err == nil && len(spec.Loras) > 0 {
+		if req.RefID != "" || len(spec.Characters) > 0 {
+			httpError(w, http.StatusBadRequest, "LoRA cannot combine with references or characters yet")
+			return
+		}
+		l := spec.Loras[0]
+		graph, err = workflow.ApplyLora(graph, s.LoraFrag, l.Name, *l.Strength)
+	}
 	// hires last: it mirrors the base sampler's links, so every earlier
-	// fragment (reference, regional) carries into the refine pass
+	// fragment (reference, regional, lora) carries into the refine pass
 	if err == nil && spec.Hires {
 		if req.Kind == "pose" {
 			httpError(w, http.StatusBadRequest, "hires does not apply to pose")
@@ -451,6 +464,20 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"image_id": id, "width": norm.Width, "height": norm.Height,
 	})
+}
+
+// GET /loras — installed LoRA filenames for the picker.
+func (s *Server) handleLoras(w http.ResponseWriter, r *http.Request) {
+	out := []string{}
+	if s.LoraDir != "" {
+		entries, _ := os.ReadDir(s.LoraDir)
+		for _, e := range entries {
+			if n := e.Name(); !e.IsDir() && (strings.HasSuffix(n, ".safetensors") || strings.HasSuffix(n, ".pt")) {
+				out = append(out, n)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"loras": out})
 }
 
 // blobDims reads just the PNG header of a stored blob.

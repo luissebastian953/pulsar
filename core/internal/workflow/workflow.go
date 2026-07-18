@@ -285,6 +285,26 @@ func ApplyIPAdapter2(graph json.RawMessage, frag *Fragment, refNames [2]string, 
 	return json.Marshal(g)
 }
 
+// ApplyLora composes a LoRA onto the spine: one LoraLoader whose model/clip
+// outputs replace the checkpoint's for the sampler and text encoders. Must
+// compose BEFORE hires (hires mirrors the base sampler's model link, which
+// this rewrites). One LoRA for now; chaining is a later fragment.
+func ApplyLora(graph json.RawMessage, frag *Fragment, name string, strength float64) (json.RawMessage, error) {
+	g, err := merge(graph, frag)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.Set(Lora.Loader, "lora_name", name); err != nil {
+		return nil, err
+	}
+	for _, in := range []string{"strength_model", "strength_clip"} {
+		if err := g.Set(Lora.Loader, in, strength); err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(g)
+}
+
 // ApplyHires composes the refine pass LAST: it mirrors the base sampler's
 // model/positive/negative links so whatever fragments rewired them
 // (reference adapters, regional conditioning) carry into the second pass.
