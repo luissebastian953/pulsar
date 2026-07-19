@@ -1,0 +1,18 @@
+{
+  "name": "herta-style",
+  "goal": "Match Honkai: Star Rail official / light-cone art style for The Herta (an HSR 3.0 character that post-dates Illustrious v0.1's 2023 cutoff, so identity must come from a reference or LoRA, not model knowledge).",
+  "reference_image": "~/Downloads/testing_the_herta.jpg",
+  "base": {
+    "prompt": "masterpiece, best quality, very aesthetic, highly detailed, absurdres, highres, incredibly detailed, highly detailed anime style, depth of field, colorful, high quality, cinematic lighting, detailed eye, gradient eyes, gradient clothes, gradient lineart, multicolored eyes, from front, looking at viewer, soft style, soft outline, gradient, centered, 1girl, the herta (honkai: star rail), full body, mature female, pale skin, smooth skin, very long hair, incredibly detailed hair, glossy hair, shiny hair, textured hair, gradient eyes, beautiful detailed eyes, blush, embarrassed, cute, dress",
+    "negative": "realistic, displeasing, very displeasing, normal quality, bad quality, blurry, lowres, upscaled, artistic error, film grain, scan artifacts, bad anatomy, bad hands, worst quality, jpeg artifacts, chromatic aberration, halftone, multiple views, logo, watermark, deformed, distortion, mismatched pupils, text, error, missing fingers, extra digit, fewer digits, cropped, low quality, signature, username, out of frame, close up, unproportional body, big forehead, animal ears, hair ornament, blindfold, headpiece, hair tie, head wings, double character, reflection, mirror, short hair, hair bow, shadow, extra limbs, poorly drawn face, messy composition, distorted face, hair bun, pointy hair, hair knot, distorted background, mechanical tools, character background",
+    "width": 832, "height": 1216, "seed": 88,
+    "sampler": "dpmpp_2m", "scheduler": "karras", "cfg": 6.2, "steps": 31,
+    "ref_mode": "character_style", "ref_strength": 1.0, "ref_fidelity": 0.55
+  },
+  "variants": [
+    { "label": "recipe", "note": "user's exact recipe as given", "overrides": {} },
+    { "label": "cs04", "note": "char&style, strength down to the coherent band", "overrides": { "ref_strength": 0.4 } },
+    { "label": "char035", "note": "character-only + artist tags + hires (reference-only CEILING)", "overrides": { "ref_mode": "character", "ref_strength": 0.35, "hires": true, "prompt_prepend": "ciloranko, ask_(askzy), as109, ", "prompt_append": ", smooth shading, soft shading, blurry background" } }
+  ],
+  "notes": "ref_strength is the whole game: character_style at 1.0 is a total blowout (abstract color noise) confirmed on 2 references; 0.4 is coherent+on-model; char-only 0.35 + artist tags + hires is the cleanest reference-only result. None reach true HSR-official finish — that ceiling is the base model. Levers beyond this file: an Illustrious FINETUNE checkpoint (checkpoint field / picker) and a style LoRA (loras field / picker)."
+}
