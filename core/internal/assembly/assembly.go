@@ -73,6 +73,7 @@ type Spec struct {
 	Hires       bool        `json:"hires,omitempty"`
 	Characters  []Character `json:"characters,omitempty"`
 	Loras       []Lora      `json:"loras,omitempty"`
+	Checkpoint  string      `json:"checkpoint,omitempty"`
 	BatchSize   int         `json:"batch_size"`
 	Lineage     string      `json:"lineage"`
 }

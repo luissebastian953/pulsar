@@ -64,9 +64,11 @@ type Server struct {
 	Regional3Frag   *workflow.Fragment
 	HiresFrag       *workflow.Fragment
 	LoraFrag        *workflow.Fragment
-	// LoraDir lists installed LoRAs for GET /loras (empty = none listed).
-	LoraDir string
-	Cfg     Config
+	// LoraDir / CheckpointDir list installed files for GET /loras and
+	// GET /checkpoints (empty = none listed).
+	LoraDir       string
+	CheckpointDir string
+	Cfg           Config
 }
 
 func (s *Server) Handler() http.Handler {
@@ -77,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
 	mux.HandleFunc("POST /uploads", s.handleUpload)
 	mux.HandleFunc("GET /loras", s.handleLoras)
+	mux.HandleFunc("GET /checkpoints", s.handleCheckpoints)
 	mux.HandleFunc("GET /tags", s.handleTags)
 	mux.HandleFunc("GET /tags/lookup", s.handleTagLookup)
 	mux.HandleFunc("POST /translate", s.handleTranslate)
@@ -106,6 +109,9 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		// RefID composes the Precise Reference fragment onto any
 		// non-pose kind (docs/precise-reference.md)
 		RefID string `json:"reference_id"`
+		// Checkpoint overrides the default base model; must be installed
+		// (same lineage — settings don't transfer).
+		Checkpoint string `json:"checkpoint"`
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
@@ -235,16 +241,26 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ckpt := s.Cfg.Checkpoint
+	if req.Checkpoint != "" {
+		if !s.checkpointInstalled(req.Checkpoint) {
+			httpError(w, http.StatusBadRequest, "unknown checkpoint "+strconv.Quote(req.Checkpoint))
+			return
+		}
+		ckpt = req.Checkpoint
+	}
+	spec.Checkpoint = ckpt
+
 	var graph json.RawMessage
 	switch req.Kind {
 	case "pose":
-		graph, err = workflow.BuildPose(s.PoseTpl, spec, s.Cfg.Checkpoint)
+		graph, err = workflow.BuildPose(s.PoseTpl, spec, ckpt)
 	case "img2img":
-		graph, err = workflow.BuildImg2Img(s.Img2ImgTpl, spec, s.Cfg.Checkpoint, req.ImageID+".png")
+		graph, err = workflow.BuildImg2Img(s.Img2ImgTpl, spec, ckpt, req.ImageID+".png")
 	case "inpaint":
-		graph, err = workflow.BuildInpaint(s.InpaintTpl, spec, s.Cfg.Checkpoint, req.ImageID+".png", req.MaskID+".png")
+		graph, err = workflow.BuildInpaint(s.InpaintTpl, spec, ckpt, req.ImageID+".png", req.MaskID+".png")
 	default:
-		graph, err = workflow.BuildTxt2Img(s.Tpl, spec, s.Cfg.Checkpoint)
+		graph, err = workflow.BuildTxt2Img(s.Tpl, spec, ckpt)
 	}
 	if err == nil && req.RefID != "" {
 		// fidelity → step range: how long the reference steers the denoise
@@ -466,18 +482,48 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /loras — installed LoRA filenames for the picker.
-func (s *Server) handleLoras(w http.ResponseWriter, r *http.Request) {
+// listModels returns installed model filenames in dir.
+func listModels(dir string) []string {
 	out := []string{}
-	if s.LoraDir != "" {
-		entries, _ := os.ReadDir(s.LoraDir)
-		for _, e := range entries {
-			if n := e.Name(); !e.IsDir() && (strings.HasSuffix(n, ".safetensors") || strings.HasSuffix(n, ".pt")) {
-				out = append(out, n)
-			}
+	if dir == "" {
+		return out
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if n := e.Name(); !e.IsDir() && (strings.HasSuffix(n, ".safetensors") || strings.HasSuffix(n, ".pt")) {
+			out = append(out, n)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"loras": out})
+	return out
+}
+
+// GET /loras — installed LoRA filenames for the picker.
+func (s *Server) handleLoras(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"loras": listModels(s.LoraDir)})
+}
+
+// checkpointInstalled reports whether name is installed, or equals the
+// configured default (so single-checkpoint deployments still validate).
+func (s *Server) checkpointInstalled(name string) bool {
+	if name == s.Cfg.Checkpoint {
+		return true
+	}
+	for _, c := range listModels(s.CheckpointDir) {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
+
+// GET /checkpoints — installed base models; active default marked so the
+// UI can preselect it.
+func (s *Server) handleCheckpoints(w http.ResponseWriter, r *http.Request) {
+	names := listModels(s.CheckpointDir)
+	if len(names) == 0 && s.Cfg.Checkpoint != "" {
+		names = []string{s.Cfg.Checkpoint}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"checkpoints": names, "active": s.Cfg.Checkpoint})
 }
 
 // blobDims reads just the PNG header of a stored blob.

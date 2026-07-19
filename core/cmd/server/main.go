@@ -217,7 +217,7 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2Frag, IPAdapterCSFrag: ipaCSFrag, Regional2Frag: reg2Frag, HiresFrag: hiresFrag, LoraFrag: loraFrag, LoraDir: envOr("LORA_DIR", "../comfy/models/loras"), Regional3Frag: reg3Frag,
+			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2Frag, IPAdapterCSFrag: ipaCSFrag, Regional2Frag: reg2Frag, HiresFrag: hiresFrag, LoraFrag: loraFrag, LoraDir: envOr("LORA_DIR", "../comfy/models/loras"), CheckpointDir: envOr("CHECKPOINT_DIR", "../comfy/models/checkpoints"), Regional3Frag: reg3Frag,
 			Cfg: api.Config{
 				Lineage: lineage, Checkpoint: checkpoint,
 				CORSOrigins:    splitNonEmpty(corsOrigins),

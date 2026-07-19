@@ -22,6 +22,8 @@ const qualityTags = ref(true)
 const faceDetail = ref(true)
 const hires = ref(false)
 const loras = ref<string[]>([])
+const checkpoints = ref<string[]>([])
+const activeCheckpoint = ref('')
 const loraName = ref('')
 const loraStrength = ref(0.8)
 
@@ -190,6 +192,7 @@ function generate() {
   if (loraName.value) {
     req.loras = [{ name: loraName.value, strength: loraStrength.value }]
   }
+  if (activeCheckpoint.value) req.checkpoint = activeCheckpoint.value
   if (i2iId.value) {
     req.kind = maskId.value ? 'inpaint' : 'img2img'
     req.image_id = i2iId.value
@@ -226,6 +229,9 @@ onMounted(async () => {
   try {
     const lr = await api.get<{ loras: string[] }>('/loras')
     loras.value = lr.loras
+    const ck = await api.get<{ checkpoints: string[], active: string }>('/checkpoints')
+    checkpoints.value = ck.checkpoints
+    activeCheckpoint.value = ck.active
   }
   catch { /* no loras endpoint or none installed */ }
   try {
@@ -444,6 +450,17 @@ const charBadge = computed(() =>
 
         <Fold v-model="folds.adv" label="Advanced" :badge="`tuned for ${modelName}`" class="mt-3.5">
           <div class="flex flex-col gap-3">
+            <div v-if="checkpoints.length > 1">
+              <div class="mb-[5px] text-xs text-dim">Base model</div>
+              <Dropdown
+                v-model="activeCheckpoint"
+                aria-label="Base model"
+                :options="checkpoints.map(c => ({ value: c, label: c.replace(/\.(safetensors|pt)$/, '') }))"
+              />
+              <div class="mt-1 text-[10.5px] leading-relaxed text-faint">
+                Swapping the base changes the look; same-lineage settings still apply.
+              </div>
+            </div>
             <SliderRow v-model="steps" label="Steps" :min="1" :max="50" />
             <SliderRow v-model="guidance" label="Prompt guidance" :min="1" :max="12" :step="0.1" :decimals="1" />
             <div>

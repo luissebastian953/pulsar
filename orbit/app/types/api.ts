@@ -54,6 +54,7 @@ export type GenerationRequest = {
   // reference_id per character needs exactly 2, both set
   characters?: { prompt: string, reference_id?: string, ref_strength?: number }[]
   loras?: { name: string, strength?: number }[]
+  checkpoint?: string
   prompt: string
   negative?: string
   width?: number

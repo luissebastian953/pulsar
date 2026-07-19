@@ -672,6 +672,37 @@ func TestEndToEndHiresAndStyle(t *testing.T) {
 
 // TestEndToEndLora: a LoRA composes onto the spine — loader patched, and
 // the sampler + text encoders route through it.
+func TestEndToEndCheckpointOverride(t *testing.T) {
+	e := newEnv(t, "e2e_ckpt", compliance.Stub{})
+	e.srv.CheckpointDir = "" // no dir listed → only the default validates
+	// unknown checkpoint is rejected
+	resp, err := http.Post(e.ts.URL+"/generate", "application/json",
+		strings.NewReader(`{"prompt": "1girl", "checkpoint": "nope.safetensors"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("unknown checkpoint = %d, want 400", resp.StatusCode)
+	}
+	// the configured default is accepted and recorded in params
+	id := e.generate(t, `{"prompt": "1girl", "seed": 5, "checkpoint": "test-ckpt.safetensors"}`)
+	v := e.waitTerminal(t, id)
+	if v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+	var g workflow.Graph
+	json.Unmarshal(e.fake.LastGraph(), &g)
+	if got := g[workflow.Txt2Img.Checkpoint].Inputs["ckpt_name"]; got != "test-ckpt.safetensors" {
+		t.Errorf("submitted ckpt = %v", got)
+	}
+	var spec assembly.Spec
+	json.Unmarshal(v.Params, &spec)
+	if spec.Checkpoint != "test-ckpt.safetensors" {
+		t.Errorf("stored checkpoint = %q", spec.Checkpoint)
+	}
+}
+
 func TestEndToEndLora(t *testing.T) {
 	e := newEnv(t, "e2e_lora", compliance.Stub{})
 	id := e.generate(t, `{"prompt": "1girl", "seed": 15, "loras": [{"name": "style.safetensors", "strength": 0.7}]}`)
