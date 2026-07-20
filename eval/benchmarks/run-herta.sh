@@ -29,7 +29,13 @@ if not v: sys.exit(f"unknown variant {label}")
 req = dict(spec['base']); ov = dict(v['overrides'])
 pre, post = ov.pop('prompt_prepend', ''), ov.pop('prompt_append', '')
 req.update(ov)
-req['prompt'] = pre + req['prompt'] + post
+# base.character (the subject) leads for tag weight + booru order, then the
+# style/quality scaffold; pulsar has no standalone character field for a
+# single character, so they merge into one prompt (and 'character' must not
+# reach core — it's not a request field).
+char = req.pop('character', '').strip()
+body = (char + ', ' if char else '') + req['prompt']
+req['prompt'] = pre + body + post
 req['reference_id'] = ref
 print(json.dumps(req))
 PY

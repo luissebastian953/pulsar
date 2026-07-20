@@ -16,8 +16,13 @@ stress test for the reference system.
 ```
 
 Reference image, base recipe, and variant overrides live in `herta-style.json`.
-The runner uploads the reference once (blob id cached in `.ref-id`) and saves each
-result to `out/<label>.png`.
+The base prompt is split into `character` (the Herta — identity, hair, eyes,
+outfit) and `prompt` (the character-agnostic quality/style/composition scaffold),
+so either can be swapped without disturbing the other. The runner merges them
+**character-first** (identity leads for tag weight + booru order), then the
+scaffold — pulsar has no standalone character field for a single subject, so they
+become one prompt. The runner uploads the reference once (blob id cached in
+`.ref-id`) and saves each result to `out/<label>.png`.
 
 ## Results
 
