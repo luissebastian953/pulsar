@@ -160,6 +160,109 @@ func TestBuildPosePatchesSpineAndExtractors(t *testing.T) {
 	}
 }
 
+func loadFrag(t *testing.T, name, sha string) *Fragment {
+	t.Helper()
+	f, err := LoadFragment(workflowsDir, name, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func firstLink(t *testing.T, g Graph, node, input string) string {
+	t.Helper()
+	link, ok := g[node].Inputs[input].([]any)
+	if !ok || len(link) == 0 {
+		t.Fatalf("node %s input %s is not a link: %v", node, input, g[node].Inputs[input])
+	}
+	return link[0].(string)
+}
+
+// TestApplyVpredWrapsFinalModel: on a bare spine, the v-pred fragment wraps
+// the checkpoint's model in ModelSamplingDiscrete → RescaleCFG → KSampler,
+// with sampling/zsnr set and the multiplier patched.
+func TestApplyVpredWrapsFinalModel(t *testing.T) {
+	base, err := BuildTxt2Img(loadTpl(t), spec(t), "ckpt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := ApplyVpred(base, loadFrag(t, FragVpred, VpredSHA256), 0.7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g Graph
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstLink(t, g, Vpred.Sampling, "model"); got != Txt2Img.Checkpoint {
+		t.Errorf("MSD model tap = %s, want checkpoint %s", got, Txt2Img.Checkpoint)
+	}
+	if g[Vpred.Sampling].Inputs["sampling"] != "v_prediction" || g[Vpred.Sampling].Inputs["zsnr"] != true {
+		t.Errorf("MSD not configured for v-pred: %+v", g[Vpred.Sampling].Inputs)
+	}
+	if got := firstLink(t, g, Vpred.Rescale, "model"); got != Vpred.Sampling {
+		t.Errorf("RescaleCFG must read MSD, got %s", got)
+	}
+	if g[Vpred.Rescale].Inputs["multiplier"] != 0.7 {
+		t.Errorf("multiplier = %v, want 0.7", g[Vpred.Rescale].Inputs["multiplier"])
+	}
+	if got := firstLink(t, g, Txt2Img.Sampler, "model"); got != Vpred.Rescale {
+		t.Errorf("KSampler model = %s, want RescaleCFG %s", got, Vpred.Rescale)
+	}
+}
+
+// TestApplyVpredWrapsComposedModel: applied after a LoRA, the wrap must sit
+// in front of the LoRA output (the composed model), not the raw checkpoint —
+// otherwise the LoRA is bypassed.
+func TestApplyVpredWrapsComposedModel(t *testing.T) {
+	base, err := BuildTxt2Img(loadTpl(t), spec(t), "ckpt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withLora, err := ApplyLora(base, loadFrag(t, FragLora, LoraSHA256), "s.safetensors", 0.8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := ApplyVpred(withLora, loadFrag(t, FragVpred, VpredSHA256), 0.5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g Graph
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstLink(t, g, Vpred.Sampling, "model"); got != Lora.Loader {
+		t.Errorf("MSD must wrap the LoRA output %s, got %s", Lora.Loader, got)
+	}
+	if got := firstLink(t, g, Txt2Img.Sampler, "model"); got != Vpred.Rescale {
+		t.Errorf("KSampler model = %s, want RescaleCFG", got)
+	}
+}
+
+// TestApplyVpredCarriesIntoHires: hires runs after the wrap and mirrors the
+// base sampler's model, so the refine pass samples the v-pred model too.
+func TestApplyVpredCarriesIntoHires(t *testing.T) {
+	base, err := BuildTxt2Img(loadTpl(t), spec(t), "ckpt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withV, err := ApplyVpred(base, loadFrag(t, FragVpred, VpredSHA256), 0.7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := ApplyHires(withV, loadFrag(t, FragHires, HiresSHA256), spec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g Graph
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstLink(t, g, Hires.Sampler, "model"); got != Vpred.Rescale {
+		t.Errorf("hires model = %s, want the v-pred wrap %s", got, Vpred.Rescale)
+	}
+}
+
 func TestOutputRoles(t *testing.T) {
 	if roles, ok := OutputRoles("txt2img"); !ok || len(roles) != 1 || roles[""] != Txt2Img.Save {
 		t.Errorf("txt2img roles = %v, %v", roles, ok)

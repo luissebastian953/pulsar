@@ -24,6 +24,24 @@ const hires = ref(false)
 const loras = ref<string[]>([])
 const checkpoints = ref<string[]>([])
 const activeCheckpoint = ref('')
+
+// model lineage: eps (illustrious) vs v-pred (noobai). Settings don't
+// transfer between lineages, so switching resets sampler/guidance/steps to
+// that lineage's recommended values (docs/tuning.md).
+const lineage = ref<'illustrious' | 'noobai'>('illustrious')
+const cfgRescale = ref(0.7)
+const LINEAGE_DEFAULTS = {
+  illustrious: { steps: 24, guidance: 5.5, sampler: 'euler_ancestral', scheduler: 'karras', rescale: 0 },
+  noobai: { steps: 28, guidance: 5.0, sampler: 'euler', scheduler: 'normal', rescale: 0.7 },
+} as const
+watch(lineage, (l) => {
+  const d = LINEAGE_DEFAULTS[l]
+  steps.value = d.steps
+  guidance.value = d.guidance
+  sampler.value = d.sampler
+  scheduler.value = d.scheduler
+  cfgRescale.value = d.rescale
+})
 const loraName = ref('')
 const loraStrength = ref(0.8)
 
@@ -193,6 +211,8 @@ function generate() {
     req.loras = [{ name: loraName.value, strength: loraStrength.value }]
   }
   if (activeCheckpoint.value) req.checkpoint = activeCheckpoint.value
+  req.lineage = lineage.value
+  if (lineage.value === 'noobai') req.cfg_rescale = cfgRescale.value
   if (i2iId.value) {
     req.kind = maskId.value ? 'inpaint' : 'img2img'
     req.image_id = i2iId.value
@@ -448,8 +468,23 @@ const charBadge = computed(() =>
           :options="[1, 2, 3, 4].map(n => ({ value: n, label: String(n) }))"
         />
 
-        <Fold v-model="folds.adv" label="Advanced" :badge="`tuned for ${modelName}`" class="mt-3.5">
+        <Fold v-model="folds.adv" label="Advanced" :badge="lineage === 'noobai' ? 'NoobAI · v-pred' : `tuned for ${modelName}`" class="mt-3.5">
           <div class="flex flex-col gap-3">
+            <div>
+              <div class="mb-[5px] text-xs text-dim">Model lineage</div>
+              <Dropdown
+                v-model="lineage"
+                aria-label="Model lineage"
+                :options="[
+                  { value: 'illustrious', label: 'Illustrious · eps' },
+                  { value: 'noobai', label: 'NoobAI · v-pred' },
+                ]"
+              />
+              <div class="mt-1 text-[10.5px] leading-relaxed text-faint">
+                v-pred (NoobAI) gives a cleaner, less-fried finish. Switching resets
+                sampler and guidance — and needs a matching base model below.
+              </div>
+            </div>
             <div v-if="checkpoints.length > 1">
               <div class="mb-[5px] text-xs text-dim">Base model</div>
               <Dropdown
@@ -463,6 +498,16 @@ const charBadge = computed(() =>
             </div>
             <SliderRow v-model="steps" label="Steps" :min="1" :max="50" />
             <SliderRow v-model="guidance" label="Prompt guidance" :min="1" :max="12" :step="0.1" :decimals="1" />
+            <SliderRow
+              v-if="lineage === 'noobai'"
+              v-model="cfgRescale"
+              label="CFG rescale"
+              title="Tempers v-pred colour burn from high guidance; 0 disables it"
+              :min="0"
+              :max="1"
+              :step="0.05"
+              :decimals="2"
+            />
             <div>
               <div class="mb-[5px] text-xs text-dim">Seed</div>
               <input

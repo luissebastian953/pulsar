@@ -1,0 +1,24 @@
+{
+  "add": {
+    "80": {
+      "class_type": "ModelSamplingDiscrete",
+      "inputs": {
+        "model": ["1", 0],
+        "sampling": "v_prediction",
+        "zsnr": true
+      }
+    },
+    "81": {
+      "class_type": "RescaleCFG",
+      "inputs": {
+        "model": ["80", 0],
+        "multiplier": 0.7
+      }
+    }
+  },
+  "set": {
+    "5": {
+      "model": ["81", 0]
+    }
+  }
+}

@@ -19,7 +19,10 @@ type Request struct {
 	CFG       float64 `json:"cfg,omitempty"`
 	Sampler   string  `json:"sampler,omitempty"`
 	Scheduler string  `json:"scheduler,omitempty"`
-	Seed      *int64  `json:"seed,omitempty"`
+	// CFGRescale tempers v-pred colour burn from high guidance (0..1);
+	// unset uses the lineage default, inert on eps lineages (docs/tuning.md).
+	CFGRescale *float64 `json:"cfg_rescale,omitempty"`
+	Seed       *int64   `json:"seed,omitempty"`
 	// Denoise applies to image-input kinds; 1.0 ignores the input
 	Denoise *float64 `json:"denoise,omitempty"`
 	// RefStrength is the Precise Reference fidelity (docs/precise-reference.md)
@@ -65,6 +68,7 @@ type Spec struct {
 	CFG         float64     `json:"cfg"`
 	Sampler     string      `json:"sampler"`
 	Scheduler   string      `json:"scheduler"`
+	CFGRescale  float64     `json:"cfg_rescale,omitempty"`
 	Seed        int64       `json:"seed"`
 	Denoise     float64     `json:"denoise,omitempty"`
 	RefStrength float64     `json:"ref_strength,omitempty"`
@@ -108,8 +112,30 @@ var samplers = map[string]bool{
 
 var schedulers = map[string]bool{"normal": true, "karras": true}
 
-// unknown lineages are refused, never guessed (docs/tagdb.md)
-var lineages = map[string]bool{"illustrious": true, "noobai": true}
+// lineageSpec holds the generation defaults that don't transfer between
+// model lineages (docs/tuning.md). Requests override any of these; unset
+// fields fall back here. Vpred lineages additionally need the workflow's
+// ModelSamplingDiscrete wrap — see workflow.ApplyVpred.
+type lineageSpec struct {
+	vpred      bool
+	cfg        float64
+	sampler    string
+	scheduler  string
+	steps      int
+	cfgRescale float64
+}
+
+// unknown lineages are refused, never guessed (docs/tagdb.md). illustrious
+// values match the historical flat defaults; noobai is v-pred (CFG 5, Euler,
+// rescale ~0.7 to kill colour burn — docs/research-novelai.md §3).
+var lineageSpecs = map[string]lineageSpec{
+	"illustrious": {vpred: false, cfg: 6.0, sampler: "euler_ancestral", scheduler: "normal", steps: 24, cfgRescale: 0},
+	"noobai":      {vpred: true, cfg: 5.0, sampler: "euler", scheduler: "normal", steps: 28, cfgRescale: 0.7},
+}
+
+// Vpred reports whether a lineage uses v-prediction, so the workflow layer
+// knows to apply the ModelSamplingDiscrete wrap. Unknown lineage → false.
+func Vpred(lineage string) bool { return lineageSpecs[lineage].vpred }
 
 // approximate end of each lineage's training data; advisory (docs/tagdb.md)
 var knowledgeCutoff = map[string]time.Time{
@@ -126,8 +152,6 @@ func KnowledgeCutoff(lineage string) (time.Time, bool) {
 const (
 	defaultWidth  = 832
 	defaultHeight = 1216
-	defaultSteps  = 24
-	defaultCFG    = 6.0
 	maxSteps      = 50
 	maxCFG        = 12.0
 )
@@ -146,7 +170,8 @@ func Build(req Request, opts Options) (Spec, error) {
 		return Spec{}, fmt.Errorf("forbidden-tag negative is not configured (FORBIDDEN_TAG_UC)")
 	}
 
-	if !lineages[opts.Lineage] {
+	ls, ok := lineageSpecs[opts.Lineage]
+	if !ok {
 		return Spec{}, fmt.Errorf("unknown lineage %q", opts.Lineage)
 	}
 
@@ -168,28 +193,35 @@ func Build(req Request, opts Options) (Spec, error) {
 		return Spec{}, fmt.Errorf("resolution %dx%d is off-bucket; allowed: 1024x1024, 896x1152, 832x1216, 1216x832, 1344x768", s.Width, s.Height)
 	}
 	if s.Steps == 0 {
-		s.Steps = defaultSteps
+		s.Steps = ls.steps
 	}
 	if s.Steps < 1 || s.Steps > maxSteps {
 		return Spec{}, fmt.Errorf("steps must be 1..%d", maxSteps)
 	}
 	if s.CFG == 0 {
-		s.CFG = defaultCFG
+		s.CFG = ls.cfg
 	}
 	if s.CFG < 1 || s.CFG > maxCFG {
 		return Spec{}, fmt.Errorf("cfg must be 1..%v", maxCFG)
 	}
 	if s.Sampler == "" {
-		s.Sampler = "euler_ancestral"
+		s.Sampler = ls.sampler
 	}
 	if !samplers[s.Sampler] {
 		return Spec{}, fmt.Errorf("unknown sampler %q", s.Sampler)
 	}
 	if s.Scheduler == "" {
-		s.Scheduler = "normal"
+		s.Scheduler = ls.scheduler
 	}
 	if !schedulers[s.Scheduler] {
 		return Spec{}, fmt.Errorf("unknown scheduler %q", s.Scheduler)
+	}
+	s.CFGRescale = ls.cfgRescale
+	if req.CFGRescale != nil {
+		if *req.CFGRescale < 0 || *req.CFGRescale > 1 {
+			return Spec{}, fmt.Errorf("cfg_rescale must be 0..1")
+		}
+		s.CFGRescale = *req.CFGRescale
 	}
 	if req.Denoise != nil {
 		if *req.Denoise < 0.05 || *req.Denoise > 0.95 {

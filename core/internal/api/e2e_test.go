@@ -104,6 +104,10 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	vpred, err := workflow.LoadFragment("../../../workflows", workflow.FragVpred, workflow.VpredSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
 	broker := job.NewBroker()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,7 +120,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2, IPAdapterCSFrag: ipaCS, Regional2Frag: reg2, Regional3Frag: reg3, HiresFrag: hires, LoraFrag: lora,
+		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2, IPAdapterCSFrag: ipaCS, Regional2Frag: reg2, Regional3Frag: reg3, HiresFrag: hires, LoraFrag: lora, VpredFrag: vpred,
 		Cfg: api.Config{
 			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
 			QualityTags:    "masterpiece, best quality",
@@ -725,6 +729,56 @@ func TestEndToEndLora(t *testing.T) {
 	}
 	if c, ok := g[workflow.Txt2Img.Positive].Inputs["clip"].([]any); !ok || c[0] != workflow.Lora.Loader {
 		t.Errorf("positive clip = %v", g[workflow.Txt2Img.Positive].Inputs["clip"])
+	}
+}
+
+// TestEndToEndVpredLineage: a per-request noobai lineage swaps in the v-pred
+// defaults and composes the ModelSamplingDiscrete + RescaleCFG wrap; the
+// default illustrious path never gets it.
+func TestEndToEndVpredLineage(t *testing.T) {
+	e := newEnv(t, "e2e_vpred", compliance.Stub{})
+	id := e.generate(t, `{"prompt": "1girl", "seed": 21, "lineage": "noobai"}`)
+	v := e.waitTerminal(t, id)
+	if v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+
+	// stored params carry the v-pred lineage defaults (reproducibility)
+	var spec assembly.Spec
+	json.Unmarshal(v.Params, &spec)
+	if spec.Lineage != "noobai" || spec.CFG != 5.0 || spec.Sampler != "euler" || spec.CFGRescale != 0.7 {
+		t.Errorf("stored spec = lineage %q cfg %v sampler %q rescale %v",
+			spec.Lineage, spec.CFG, spec.Sampler, spec.CFGRescale)
+	}
+
+	// the submitted graph carries the wrap: MSD → RescaleCFG → KSampler
+	var g workflow.Graph
+	if err := json.Unmarshal(e.fake.LastGraph(), &g); err != nil {
+		t.Fatal(err)
+	}
+	msd := g[workflow.Vpred.Sampling]
+	if msd == nil || msd.Inputs["sampling"] != "v_prediction" || msd.Inputs["zsnr"] != true {
+		t.Errorf("ModelSamplingDiscrete missing/misconfigured: %+v", msd)
+	}
+	if got := g[workflow.Vpred.Rescale].Inputs["multiplier"]; got != 0.7 {
+		t.Errorf("rescale multiplier = %v, want 0.7", got)
+	}
+	if m, ok := g[workflow.Txt2Img.Sampler].Inputs["model"].([]any); !ok || m[0] != workflow.Vpred.Rescale {
+		t.Errorf("KSampler model = %v, want the v-pred wrap", g[workflow.Txt2Img.Sampler].Inputs["model"])
+	}
+
+	// default lineage (illustrious) never composes the wrap
+	id2 := e.generate(t, `{"prompt": "1girl", "seed": 22}`)
+	if v := e.waitTerminal(t, id2); v.State != "done" {
+		t.Fatalf("eps state = %s (%s)", v.State, v.Error)
+	}
+	var g2 workflow.Graph
+	json.Unmarshal(e.fake.LastGraph(), &g2)
+	if _, exists := g2[workflow.Vpred.Sampling]; exists {
+		t.Error("eps lineage must not get the ModelSamplingDiscrete wrap")
+	}
+	if m, ok := g2[workflow.Txt2Img.Sampler].Inputs["model"].([]any); !ok || m[0] != workflow.Txt2Img.Checkpoint {
+		t.Errorf("eps KSampler model = %v, want raw checkpoint", g2[workflow.Txt2Img.Sampler].Inputs["model"])
 	}
 }
 

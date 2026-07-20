@@ -29,6 +29,9 @@ const (
 	FragHires   = "patches/hires.json"
 	HiresSHA256 = "sha256:3de5a80b08f6bb277ddc66f1ff86afdafbf198bfb80dea74c0f51e6855ef9b84"
 
+	FragVpred   = "patches/vpred.json"
+	VpredSHA256 = "sha256:f4d112c0b5c3c8e6d804136a5d6fc451547904eb75fc0ee1278641099d68da1a"
+
 	FragRegional2   = "patches/regional2.json"
 	Regional2SHA256 = "sha256:9baeb495e5c3f1f8b91e72e9531fb9662c0df35c4e30505fd9cc3c76ea632460"
 	FragRegional3   = "patches/regional3.json"
@@ -166,6 +169,14 @@ var IPAdapter2 = struct {
 // Lora fragment (reserved 70): LoraLoader on the spine — model + clip flow
 // through it so both the sampler and the text encoders see the LoRA.
 var Lora = struct{ Loader string }{Loader: "70"}
+
+// Vpred fragment (reserved 80–89): ModelSamplingDiscrete (v_prediction, zsnr)
+// + RescaleCFG wrap the final model — applied last in the model chain, after
+// lora/reference, so it converts the fully-composed model (docs/tuning.md).
+var Vpred = struct {
+	Sampling string
+	Rescale  string
+}{Sampling: "80", Rescale: "81"}
 
 // Hires fragment (reserved 60–69): pixel-space 1.5x upscale + refine pass
 // (latent upscaling streaks on MPS; lanczos in pixel space is robust).

@@ -64,6 +64,7 @@ type Server struct {
 	Regional3Frag   *workflow.Fragment
 	HiresFrag       *workflow.Fragment
 	LoraFrag        *workflow.Fragment
+	VpredFrag       *workflow.Fragment
 	// LoraDir / CheckpointDir list installed files for GET /loras and
 	// GET /checkpoints (empty = none listed).
 	LoraDir       string
@@ -112,6 +113,11 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		// Checkpoint overrides the default base model; must be installed
 		// (same lineage — settings don't transfer).
 		Checkpoint string `json:"checkpoint"`
+		// Lineage overrides the deployment default (env LINEAGE) per request
+		// so eps and v-pred bases can be A/B'd on one deployment. Pair it
+		// with a matching Checkpoint — a v-pred checkpoint on an eps lineage
+		// (or vice versa) produces garbage (docs/tuning.md).
+		Lineage string `json:"lineage"`
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
@@ -221,8 +227,12 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		seed = int64(binary.BigEndian.Uint64(b[:]) >> 1) // non-negative
 	}
 
+	lineage := s.Cfg.Lineage
+	if req.Lineage != "" {
+		lineage = req.Lineage // validated in assembly.Build (unknown → 400)
+	}
 	spec, err := assembly.Build(req.Request, assembly.Options{
-		Lineage: s.Cfg.Lineage, Seed: seed,
+		Lineage: lineage, Seed: seed,
 		QualityTags: s.Cfg.QualityTags, DefaultUC: s.Cfg.DefaultUC, ForbiddenTagUC: s.Cfg.ForbiddenTagUC,
 	})
 	if err != nil {
@@ -336,8 +346,14 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		l := spec.Loras[0]
 		graph, err = workflow.ApplyLora(graph, s.LoraFrag, l.Name, *l.Strength)
 	}
+	// v-pred wrap after the model-chain fragments (so it converts the
+	// composed model) but before hires (so the wrap carries into the refine
+	// pass). eps lineages skip it entirely.
+	if err == nil && assembly.Vpred(spec.Lineage) {
+		graph, err = workflow.ApplyVpred(graph, s.VpredFrag, spec.CFGRescale)
+	}
 	// hires last: it mirrors the base sampler's links, so every earlier
-	// fragment (reference, regional, lora) carries into the refine pass
+	// fragment (reference, regional, lora, v-pred wrap) carries into the refine pass
 	if err == nil && spec.Hires {
 		if req.Kind == "pose" {
 			httpError(w, http.StatusBadRequest, "hires does not apply to pose")

@@ -53,19 +53,24 @@ When you edit a template:
 
 ## Templates compose — don't multiply them
 
-A request may be `txt2img_vpred + ipadapter + regional + hires`. Select a base, apply
-feature patches. Do **not** create
+A request may be `txt2img + ipadapter + regional + vpred + hires`. Select a base,
+apply feature patches. Do **not** create
 `txt2img_vpred_ipadapter_regional_hires.json` — the cartesian product is
 unmaintainable and it's how this repo would rot.
 
 Bases:
-- `txt2img.json` — Illustrious (eps)
-- `txt2img_vpred.json` — NoobAI (v-pred; includes `ModelSamplingDiscrete`)
+- `txt2img.json` — the spine (lineage-agnostic; v-pred is a patch, below)
 - `img2img.json` — `LoadImage` → `VAEEncode`, `denoise` < 1.0
 - `inpaint.json` — + `SetLatentNoiseMask`
 - `pose.json` — generate → `lineart_anime` + `openpose` extract
 
-Feature patches: `ipadapter`, `regional`, `hires`.
+Feature patches: `ipadapter`, `regional2`/`regional3`, `lora`, `vpred`, `hires`.
+
+`vpred` (NoobAI v-pred) is a **patch, not a base**: it wraps the composed model in
+`ModelSamplingDiscrete` + `RescaleCFG` (nodes 80–81) and rewires the KSampler
+through them. It composes onto any base and must apply **after** model-chain
+fragments (lora, reference) and **before** hires — `assembly.Vpred(lineage)` gates
+it. This keeps one spine instead of an eps base and a near-identical v-pred base.
 
 ## The graph diffs worth knowing
 

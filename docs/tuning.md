@@ -6,19 +6,29 @@ This is the #1 source of "why does our output look worse than Civitai's."
 
 | | Illustrious (eps) | NoobAI (v-pred) |
 |---|---|---|
-| CFG | 5–7 | 3.5–5 |
+| CFG | 5–7 (ship 6) | 3.5–5 (ship 5) |
 | Sampler | Euler a / DPM++ 2M Karras | Euler / Euler a |
-| Steps | 25–30 (ship 20–24) | 25–30 (ship 20–24) |
+| Steps | 25–30 (ship 24) | 28–35 (ship 28) |
 | Required node | — | `ModelSamplingDiscrete` (v_prediction, zsnr=true) |
-| CFG rescale | 0 | 0.5–0.7 |
+| CFG rescale | 0 | 0.4–0.7 (ship 0.7, tunable) |
 | Quality tags | `masterpiece, best quality, very aesthetic, absurdres` | + `very awa` |
 
-**v-pred without `ModelSamplingDiscrete` produces garbage**, not degraded output.
-Modern ComfyUI auto-detects v-pred/ZSNR checkpoints; keep the explicit node as a
-fallback and don't rely on autodetection silently working.
+These are the shipped defaults in `assembly`'s per-lineage table (`lineageSpecs`),
+keyed by the request's `lineage` (env `LINEAGE` sets the default; a request may
+override it per generation so both lineages A/B on one deployment). Requests
+override any individual field.
+
+**v-pred is the `patches/vpred.json` fragment, not a separate base.** It composes
+onto *any* built base, inserting `ModelSamplingDiscrete` (v_prediction, zsnr) +
+`RescaleCFG` and rewiring the KSampler's model through them. It applies **after**
+the model-chain fragments (lora, reference) so it wraps the fully-composed model,
+and **before** hires so the wrap carries into the refine pass. `assembly.Vpred(lineage)`
+gates it. **Without `ModelSamplingDiscrete` a v-pred checkpoint produces garbage**,
+not degraded output — pair the `noobai` lineage with a v-pred checkpoint.
 
 **CFG rescale exists to kill v-pred's colour burn.** That's what NAI's "Prompt
-Guidance Rescale" slider is. Surface it only when the model is v-pred.
+Guidance Rescale" slider is. It's `RescaleCFG`'s `multiplier`, surfaced as a slider
+only on v-pred lineages; `cfg_rescale: 0` disables it.
 
 ## Resolution buckets
 

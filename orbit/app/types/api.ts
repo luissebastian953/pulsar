@@ -55,6 +55,11 @@ export type GenerationRequest = {
   characters?: { prompt: string, reference_id?: string, ref_strength?: number }[]
   loras?: { name: string, strength?: number }[]
   checkpoint?: string
+  // model lineage: eps (illustrious) or v-pred (noobai). Overrides the
+  // deployment default; pair with a matching checkpoint.
+  lineage?: 'illustrious' | 'noobai'
+  // v-pred colour-burn rescale (0..1); only meaningful on a v-pred lineage.
+  cfg_rescale?: number
   prompt: string
   negative?: string
   width?: number

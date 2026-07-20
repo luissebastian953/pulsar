@@ -165,7 +165,7 @@ weight, see below); NAI's append works because their scheduler weights different
   band.**
 - **[cited]** **Prompt Guidance Rescale** exists specifically to fix colors that
   go "too strong around the edges / deepfried" at high guidance — this is
-  CFG-rescale, exactly the `~0.2` the NoobAI v-pred plan needs.
+  CFG-rescale (ComfyUI `RescaleCFG`), the knob the NoobAI v-pred plan needs.
 - **[cited]** **Decrisper** = a toggle that mitigates color/artifact issues at
   high guidance. Same purpose, different knob.
 
@@ -223,7 +223,8 @@ today plateaued on "sharp / unsmooth."
 - **CFG 4–5**, **Euler sampler only** (Karras / other schedulers reported to
   fail — matches CLAUDE.md's eps↔v-pred non-transfer invariant),
   **28–35 steps**.
-- **CFG Rescale ~0.2**, and the runtime needs `prediction_type=v_prediction` +
+- **CFG Rescale** (community range ~0.4–0.7; pulsar ships 0.7, tunable per
+  request), and the runtime needs `prediction_type=v_prediction` +
   `rescale_betas_zero_snr=True` (this is the `ModelSamplingDiscrete` node the
   comfy-workflow skill already specifies for v-pred).
 - Optimal resolution **832×1216** (same bucket pulsar defaults to).

@@ -21,6 +21,61 @@ func opts() Options {
 
 func boolPtr(b bool) *bool { return &b }
 
+func fPtr(f float64) *float64 { return &f }
+
+// TestLineageDefaults pins the non-transferable per-lineage generation
+// settings (docs/tuning.md): noobai is v-pred with its own CFG/sampler/steps
+// and a colour-burn rescale; illustrious keeps the historical flat defaults.
+func TestLineageDefaults(t *testing.T) {
+	o := opts()
+	o.Lineage = "noobai"
+	s, err := Build(Request{Prompt: "1girl"}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CFG != 5.0 || s.Sampler != "euler" || s.Scheduler != "normal" || s.Steps != 28 || s.CFGRescale != 0.7 {
+		t.Errorf("noobai defaults = cfg %v sampler %q sched %q steps %d rescale %v",
+			s.CFG, s.Sampler, s.Scheduler, s.Steps, s.CFGRescale)
+	}
+	if !Vpred("noobai") {
+		t.Error("noobai must report v-pred")
+	}
+	// illustrious: unchanged, no rescale, not v-pred
+	s, err = Build(Request{Prompt: "1girl"}, opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CFG != 6.0 || s.Sampler != "euler_ancestral" || s.Steps != 24 || s.CFGRescale != 0 {
+		t.Errorf("illustrious defaults drifted: cfg %v sampler %q steps %d rescale %v",
+			s.CFG, s.Sampler, s.Steps, s.CFGRescale)
+	}
+	if Vpred("illustrious") {
+		t.Error("illustrious must not report v-pred")
+	}
+}
+
+// TestCFGRescaleOverride: a request may tune the rescale (including an
+// explicit 0 to disable it on a v-pred lineage); out-of-range is refused.
+func TestCFGRescaleOverride(t *testing.T) {
+	o := opts()
+	o.Lineage = "noobai"
+	s, err := Build(Request{Prompt: "1girl", CFGRescale: fPtr(0.2)}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.CFGRescale != 0.2 {
+		t.Errorf("override = %v, want 0.2", s.CFGRescale)
+	}
+	if s, err := Build(Request{Prompt: "1girl", CFGRescale: fPtr(0)}, o); err != nil || s.CFGRescale != 0 {
+		t.Errorf("explicit 0 must disable rescale: %v %v", s.CFGRescale, err)
+	}
+	for _, bad := range []float64{-0.1, 1.1} {
+		if _, err := Build(Request{Prompt: "1girl", CFGRescale: fPtr(bad)}, o); err == nil {
+			t.Errorf("cfg_rescale %v must be rejected", bad)
+		}
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	s, err := Build(Request{Prompt: "1girl, silver hair"}, opts())
 	if err != nil {

@@ -305,6 +305,37 @@ func ApplyLora(graph json.RawMessage, frag *Fragment, name string, strength floa
 	return json.Marshal(g)
 }
 
+// ApplyVpred wraps the final model in ModelSamplingDiscrete (v_prediction,
+// zsnr) + RescaleCFG — required for v-pred lineages (without it, output is
+// garbage, not degraded). It reads whatever the base sampler's model link
+// currently points to (checkpoint, or a lora/reference node if those
+// composed first) and inserts the wrap in front, so it must run AFTER the
+// model-chain fragments and BEFORE hires (which then mirrors the wrapped
+// model into the refine pass). multiplier 0 = no rescale (docs/tuning.md).
+func ApplyVpred(graph json.RawMessage, frag *Fragment, multiplier float64) (json.RawMessage, error) {
+	var pre Graph
+	if err := json.Unmarshal(graph, &pre); err != nil {
+		return nil, err
+	}
+	base, ok := pre[Txt2Img.Sampler]
+	if !ok {
+		return nil, fmt.Errorf("vpred: base sampler missing")
+	}
+	model := base.Inputs["model"] // the composed model tap, pre-wrap
+
+	g, err := merge(graph, frag) // adds 80/81, sets sampler.model = [81,0]
+	if err != nil {
+		return nil, err
+	}
+	if err := g.Set(Vpred.Sampling, "model", model); err != nil {
+		return nil, err
+	}
+	if err := g.Set(Vpred.Rescale, "multiplier", multiplier); err != nil {
+		return nil, err
+	}
+	return json.Marshal(g)
+}
+
 // ApplyHires composes the refine pass LAST: it mirrors the base sampler's
 // model/positive/negative links so whatever fragments rewired them
 // (reference adapters, regional conditioning) carry into the second pass.

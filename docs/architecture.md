@@ -84,21 +84,23 @@ Operational notes:
 Stored as API-format JSON in `workflows/`, versioned by content hash, patched by
 node ID.
 
-| Template | Purpose |
+| Template / patch | Purpose |
 |---|---|
 | `txt2img.json` | Art page base |
-| `txt2img_vpred.json` | NoobAI v-pred (+ `ModelSamplingDiscrete`, CFG rescale) |
 | `img2img.json` | `LoadImage` → `VAEEncode`, `denoise` |
 | `inpaint.json` | + `SetLatentNoiseMask` |
-| `ipadapter.json` | Precise Reference |
-| `regional.json` | Multi-character masked conditioning |
-| `hires.json` | Latent upscale + 2nd pass @ denoise ~0.4 |
+| `patches/vpred.json` | NoobAI v-pred wrap (`ModelSamplingDiscrete` + `RescaleCFG`) |
+| `patches/ipadapter.json` | Precise Reference |
+| `patches/regional2.json` / `regional3.json` | Multi-character masked conditioning |
+| `patches/lora.json` | Style / character LoRA |
+| `patches/hires.json` | Pixel-space upscale + 2nd pass @ denoise ~0.4 |
 | `pose.json` | Generate → `lineart_anime` + `openpose` extract |
 
-**Templates compose.** A request may be `txt2img_vpred + ipadapter + regional +
-hires`. Select a base, apply feature patches. Do not maintain the cartesian product
-as separate files — that way lies
-`txt2img_vpred_ipadapter_regional_hires.json`.
+**Templates compose.** A request may be `txt2img + ipadapter + regional + vpred +
+hires`. Select a base, apply feature patches. v-pred ships as a *patch* (not a
+`txt2img_vpred.json` base) so it composes onto any base and after any model-chain
+fragment — see `docs/tuning.md`. Do not maintain the cartesian product as separate
+files — that way lies `txt2img_vpred_ipadapter_regional_hires.json`.
 
 See `.claude/skills/comfy-workflow/` before touching these.
 
