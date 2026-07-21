@@ -39,3 +39,6 @@ comfy/ComfyUI/
 comfy/output/
 comfy/input/
 comfy/.extra_model_paths.yaml
+
+# dev-local compose override (native comfy/sentinel wiring)
+docker-compose.override.yml
