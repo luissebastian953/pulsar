@@ -125,6 +125,7 @@ Reference vendored at `eval/benchmarks/testing_the_herta.jpg`; results in
 | ✅ HSR v3 LoRA (civitai 1944603) @ 0.7 | **Style winner.** Splash lighting/palette lands; gallery "over-crisp lines" doesn't manifest at 0.7 on our stack. txt2img renders the game logo — weighted `(logo:1.3)` negative. |
 | ✅ HSR Official-Art LoRA (civitai 1636274) @ 0.65 | Clean (no gallery "grunge" at reduced weight) but weaker style signature; runner-up. |
 | ✅ **FLAGSHIP: v3 LoRA @ 0.7 + i2i 0.45 + official-art tags on v-pred** | Closest to HSR light-cone finish produced. Promoted to `flagship` benchmark variant. |
+| ✅ Coloration sweep on the flagship (rescale 0.4/0.55/0.7 × CFG 5.0/5.8 × `very awa`) | **Rescale 0.7 was draining color.** 0.4 = richest grade (i2i anchor prevents burn) → pinned in flagship; 0.55 = new lineage default (safer for unanchored txt2img). CFG 5.8 trades saturation for contrast — taste option. `very awa` goes pastel/airy — wrong direction for richness. |
 
 ## Next actions (ranked)
 

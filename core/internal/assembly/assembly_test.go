@@ -33,7 +33,7 @@ func TestLineageDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.CFG != 5.0 || s.Sampler != "euler" || s.Scheduler != "normal" || s.Steps != 28 || s.CFGRescale != 0.7 {
+	if s.CFG != 5.0 || s.Sampler != "euler" || s.Scheduler != "normal" || s.Steps != 28 || s.CFGRescale != 0.55 {
 		t.Errorf("noobai defaults = cfg %v sampler %q sched %q steps %d rescale %v",
 			s.CFG, s.Sampler, s.Scheduler, s.Steps, s.CFGRescale)
 	}

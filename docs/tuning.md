@@ -10,7 +10,7 @@ This is the #1 source of "why does our output look worse than Civitai's."
 | Sampler | Euler a / DPM++ 2M Karras | Euler / Euler a |
 | Steps | 25–30 (ship 24) | 28–35 (ship 28) |
 | Required node | — | `ModelSamplingDiscrete` (v_prediction, zsnr=true) |
-| CFG rescale | 0 | 0.4–0.7 (ship 0.7, tunable) |
+| CFG rescale | 0 | 0.4–0.7 (ship 0.55; i2i-anchored runs tolerate 0.4 for richer color — swept 2026-07-26) |
 | Quality tags | `masterpiece, best quality, very aesthetic, absurdres` | + `very awa` |
 
 These are the shipped defaults in `assembly`'s per-lineage table (`lineageSpecs`),

@@ -73,10 +73,10 @@
     },
     {
       "label": "flagship",
-      "note": "THE recipe (2026-07-26): official-composition img2img + HSR v3 style LoRA @ 0.7 on NoobAI v-pred + official-art tags. Closest to HSR light-cone finish produced.",
+      "note": "THE recipe (2026-07-26): official-composition img2img + HSR v3 style LoRA @ 0.7 on NoobAI v-pred + official-art tags. rescale 0.4 = color-sweep winner (i2i anchor tolerates full color energy; txt2img uses the 0.55 lineage default).",
       "overrides": {
         "lineage": "noobai", "checkpoint": "noobai-xl-vpred.safetensors",
-        "sampler": "euler", "scheduler": "normal", "cfg": 5.0, "steps": 28,
+        "sampler": "euler", "scheduler": "normal", "cfg": 5.0, "steps": 28, "cfg_rescale": 0.4,
         "kind": "img2img", "denoise": 0.45,
         "loras": [{ "name": "honkai star rail_v3.safetensors", "strength": 0.7 }],
         "prompt_prepend": "official art, game cg, "

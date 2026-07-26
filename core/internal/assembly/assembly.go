@@ -130,7 +130,7 @@ type lineageSpec struct {
 // rescale ~0.7 to kill colour burn — docs/research-novelai.md §3).
 var lineageSpecs = map[string]lineageSpec{
 	"illustrious": {vpred: false, cfg: 6.0, sampler: "euler_ancestral", scheduler: "normal", steps: 24, cfgRescale: 0},
-	"noobai":      {vpred: true, cfg: 5.0, sampler: "euler", scheduler: "normal", steps: 28, cfgRescale: 0.7},
+	"noobai":      {vpred: true, cfg: 5.0, sampler: "euler", scheduler: "normal", steps: 28, cfgRescale: 0.55},
 }
 
 // Vpred reports whether a lineage uses v-prediction, so the workflow layer

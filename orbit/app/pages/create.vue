@@ -29,10 +29,10 @@ const activeCheckpoint = ref('')
 // transfer between lineages, so switching resets sampler/guidance/steps to
 // that lineage's recommended values (docs/tuning.md).
 const lineage = ref<'illustrious' | 'noobai'>('illustrious')
-const cfgRescale = ref(0.7)
+const cfgRescale = ref(0.55)
 const LINEAGE_DEFAULTS = {
   illustrious: { steps: 24, guidance: 5.5, sampler: 'euler_ancestral', scheduler: 'karras', rescale: 0 },
-  noobai: { steps: 28, guidance: 5.0, sampler: 'euler', scheduler: 'normal', rescale: 0.7 },
+  noobai: { steps: 28, guidance: 5.0, sampler: 'euler', scheduler: 'normal', rescale: 0.55 },
 } as const
 watch(lineage, (l) => {
   const d = LINEAGE_DEFAULTS[l]
