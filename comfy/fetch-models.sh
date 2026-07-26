@@ -36,6 +36,13 @@ fetch() {
 
 fetch "$CKPT_URL" "$CKPT_SHA256" "$CKPT_DEST"
 
+# NoobAI-XL v-pred 1.0, 7.11 GB — the noobai lineage base (v-pred + ZTSNR;
+# docs/research-draft.md). Licence: fair-ai-public-license-1.0-sd
+# (docs/tuning.md#model-licences).
+fetch "https://huggingface.co/Laxhar/noobai-XL-Vpred-1.0/resolve/main/NoobAI-XL-Vpred-v1.0.safetensors" \
+  "ea349eeae87ca8d25ba902c93810f7ca83e5c82f920edf12f273af004ae02819" \
+  "$MODELS_DIR/checkpoints/noobai-xl-vpred.safetensors"
+
 # IP-Adapter Plus SDXL + its CLIP-ViT-H encoder (Precise Reference,
 # docs/precise-reference.md); filenames are what IPAdapterUnifiedLoader expects
 fetch "https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors" \
