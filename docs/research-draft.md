@@ -88,7 +88,7 @@ remains is the base model. Do not keep bisecting reference strength.
 
 | Lever | State | Blocker |
 |---|---|---|
-| 🔧 **NoobAI-XL v-pred lineage** | Fully wired: `patches/vpred.json` (ModelSamplingDiscrete + RescaleCFG), per-lineage defaults (CFG 5 / Euler / 28 steps / rescale 0.7), per-request `lineage`, UI picker. | Checkpoint file → `comfy/models/checkpoints/` (7.1 GB, HF link above). **Highest-expected-value untested lever.** |
+| ✅ **NoobAI-XL v-pred lineage** — **VALIDATED 2026-07-26.** First A/B vs eps (same prompt/seed/reference, each base at native settings): the finish gap **closed substantially** — soft unbroken linework, controlled palette, correct global values, artist-tag style finally reads. The v-pred+ZTSNR prediction held. Remaining gaps: outfit drifts off-canon (identity, not finish — reference @ 0.35 is a light anchor), residual background texture from the adapter, and final splash polish (hires / `very awa` / LoRA untried on this base). ~10 min incl. 7 GB cold load; sampling pace comparable to eps. | Checkpoint pinned in `comfy/fetch-models.sh`. | — |
 | 🔧 Illustrious finetune as base (WAI / Nova / v1.1) | Per-request checkpoint picker shipped. | A finetune file (mostly Civitai, auth-walled — user-sourced). |
 | 🔧 Style LoRA (HSR / light-cone) | LoRA fragment + picker shipped. | A LoRA file (Civitai, user-sourced). |
 
@@ -104,11 +104,39 @@ remains is the base model. Do not keep bisecting reference strength.
 | ⬜ SMEA-style high-res sampling | NAI-proprietary; community ComfyUI nodes exist but unvetted. | NAI sampling docs |
 | ⬜ FaceDetailer pass | Biggest *perceived* quality jump (faces); planned in `docs/tuning.md`, not built. | tuning.md |
 
+### ✅ Tried — full reference-mode + img2img matrix on v-pred (2026-07-26)
+
+Reference vendored at `eval/benchmarks/testing_the_herta.jpg`; results in
+`eval/benchmarks/herta-style.md`.
+
+| Experiment | Verdict |
+|---|---|
+| ✅ character @ 0.5 + hires (v-pred) | Best figure rendering of the project; 0.5 stable (higher ceiling than eps). **Hires amplifies the adapter's bg texture into streaks** — fix: concrete background tags, or mask the adapter to the subject. |
+| ✅ style @ 0.6 (v-pred) | Style/palette transfers cleanly, background stays clean — the bg artifact is specific to *character* embeddings. No identity carry (by design). |
+| ✅ character_style @ 0.4, 20 steps (v-pred) | Coherent (no eps-style blowout) but hazy/underdone; dual adapter still ~10× slower — cap steps. |
+| ✅ **img2img @ 0.55 denoise on the official art (v-pred)** | **★ Best "official finish" of the entire project.** Inherits composition/values from the source and repaints in the model's hand — real background, near-canonical outfit. For official-look output, i2i-from-official-composition beats every reference mode. |
+
+### ✅ Tried — free levers + HSR style LoRAs (2026-07-26, later)
+
+| Experiment | Verdict |
+|---|---|
+| ✅ `official art, game cg` tags, fan-artist tags dropped | Real lever: eye rendering and finish move toward game-CG; fan-artist tags actively pull *away* from the miHoYo hand on v-pred. |
+| ✅ Concrete background tags (`classroom, chalkboard, indoors`) with character ref | **Fixes the reference background artifact** — no `attn_mask` engineering needed. |
+| ✅ HSR v3 LoRA (civitai 1944603) @ 0.7 | **Style winner.** Splash lighting/palette lands; gallery "over-crisp lines" doesn't manifest at 0.7 on our stack. txt2img renders the game logo — weighted `(logo:1.3)` negative. |
+| ✅ HSR Official-Art LoRA (civitai 1636274) @ 0.65 | Clean (no gallery "grunge" at reduced weight) but weaker style signature; runner-up. |
+| ✅ **FLAGSHIP: v3 LoRA @ 0.7 + i2i 0.45 + official-art tags on v-pred** | Closest to HSR light-cone finish produced. Promoted to `flagship` benchmark variant. |
+
 ## Next actions (ranked)
 
-1. Download NoobAI-XL v-pred → `comfy/models/checkpoints/` → UI: lineage
-   *NoobAI · v-pred* + that checkpoint → rerun the Herta benchmark
-   (character @ 0.35, single adapter) → record verdict in the ledger.
-2. On the new base: CFG 5.0–5.5, rescale 0.5–0.7 sweep, `very awa` appended
-   to quality tags (env `QUALITY_TAGS`).
-3. Then, and only then, the LoRA last-mile if the style still misses.
+1. ~~NoobAI v-pred~~ **validated.** ~~Style LoRA~~ **validated — v3 @ 0.7 wins; `flagship` variant recorded.**
+2. Polish the flagship: denoise sweep 0.35–0.55, hires-on-top @ low denoise,
+   `very awa` in quality tags, weighted logo/watermark negatives.
+3. txt2img parity: v3 LoRA + character reference together — **blocked by the
+   v1 "LoRA cannot combine with references" limit in `api`; lifting it is the
+   next engineering task** (LoRA loads before the adapter in the model chain,
+   so composition order is already correct).
+4. Tier-1 LoRA refinement only if polish plateaus: block-weight merge
+   (1636274 output-blocks color × 1944603 structure) or continue-train via
+   kohya `--network_weights` on a curated official-art set (~$2 cloud GPU;
+   sentinel's WD tagger can auto-caption).
+5. Optional identity add-on: all-characters HSR pack (civitai 434763).
