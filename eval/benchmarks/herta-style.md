@@ -50,6 +50,14 @@ from Silver Wolf: at denoise 0.45 the source outfit **overrides** tag identity
 pick a canonical-outfit source. webp sources must be converted (ingest speaks
 JPEG/PNG only).
 
+Zoom-test refinement (2026-07-27): at native 832×1216 the eyes are ~60 px
+wide, so catchlights render malformed and the style LoRA's texture reads as
+grain under zoom. `hires: true` on the flagship (refine @ 1248×1824, denoise
+0.4) fixes both — layered irises with round catchlights, grain dissolved, and
+no background streaks on the i2i path (that artifact was reference-mode-only).
+Now part of the flagship variant (~2× generation time). Next escalation if
+faces still miss under zoom: the FaceDetailer pass (docs/tuning.md).
+
 ## Conclusion
 
 `ref_strength` is the whole game with the two-adapter Character & Style mode:

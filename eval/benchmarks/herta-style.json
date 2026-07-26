@@ -77,7 +77,7 @@
       "overrides": {
         "lineage": "noobai", "checkpoint": "noobai-xl-vpred.safetensors",
         "sampler": "euler", "scheduler": "normal", "cfg": 5.0, "steps": 28, "cfg_rescale": 0.4,
-        "kind": "img2img", "denoise": 0.45,
+        "kind": "img2img", "denoise": 0.45, "hires": true,
         "loras": [{ "name": "honkai star rail_v3.safetensors", "strength": 0.7 }],
         "prompt_prepend": "official art, game cg, "
       }
