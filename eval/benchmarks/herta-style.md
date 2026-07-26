@@ -37,6 +37,19 @@ become one prompt. The runner uploads the reference once (blob id cached in
 | i2i | v-pred | — | img2img @ 0.55 | no | **Repaint path validated** — inherits official composition/values, re-renders in the model's hand; was the best result until the LoRA landed. |
 | flagship | v-pred | — | img2img @ 0.45 + **HSR v3 LoRA @ 0.7** | no | **★ THE recipe.** `official art, game cg` tags (no fan-artist tags) + style LoRA + official-composition repaint: iridescent multi-tone eyes, warm splash lighting, painterly fabric — closest to HSR light-cone finish produced. LoRA-weight findings: v3 @ 0.7 has soft lines (gallery "over-crisp" was the poster's setup); Official-Art LoRA @ 0.65 clean but weaker signature; v3 txt2img renders the game logo — use a weighted `(logo:1.3)` negative. |
 
+## Cross-character validation (2026-07-26)
+
+The flagship recipe was run against four more vendored sources
+(`testing_the_herta_2.png`, `testing_the_herta_3.jpg`, `testing_ruan_mei.png`,
+`testing_silver_wolf.jpg`) — two post-cutoff (Herta), two in-model (Ruan Mei,
+Silver Wolf). It generalized: the herta_3 witch-art repaint is the best output
+of the project (splash-art grade), and Ruan Mei's canonical design language
+survived intact (tag identity + source composition + LoRA stack). One lesson
+from Silver Wolf: at denoise 0.45 the source outfit **overrides** tag identity
+— for strong-identity characters on off-canon sources, raise denoise (~0.6) or
+pick a canonical-outfit source. webp sources must be converted (ingest speaks
+JPEG/PNG only).
+
 ## Conclusion
 
 `ref_strength` is the whole game with the two-adapter Character & Style mode:
