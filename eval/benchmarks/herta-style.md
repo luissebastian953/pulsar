@@ -26,11 +26,16 @@ become one prompt. The runner uploads the reference once (blob id cached in
 
 ## Results
 
-| Variant | Reference | Strength | Mode | Hires | Verdict |
+| Variant | Base | Strength | Mode | Hires | Verdict |
 |---|---|---|---|---|---|
-| recipe | classroom Herta | 1.0 | character_style | no | **Blowout** — abstract color noise, no character. Confirmed **3×** across 3 references (`out/recipe.png`): char_style @ 1.0 destroys generation regardless of reference. |
-| cs04 | classroom Herta | 0.4 | character_style | no | **Coherent, on-model** — lavender/purple gradient hair, purple eyes, white dress + caped pauldrons + blue sash + gold clasp. Background still shimmers (IP-Adapter color artifact). |
-| char035 | witch art | 0.35 | character | yes | **Reference-only ceiling** — hires smooths linework/shading, single adapter removes character color distortion, identity close to canonical. Background still shimmers; face reads generic-anime not miHoYo-painterly. |
+| recipe | eps | 1.0 | character_style | no | **Blowout** — abstract color noise, no character. Confirmed **3×** across 3 references (`out/recipe.png`): char_style @ 1.0 destroys generation regardless of reference. |
+| cs04 | eps | 0.4 | character_style | no | **Coherent, on-model** — but background shimmers (IP-Adapter color artifact) and finish is the eps ceiling. |
+| char035 | eps | 0.35 | character | yes | **eps reference-only ceiling** — identity close, face generic-anime, background shimmers. |
+| vpred-char | v-pred | 0.5 | character | yes | **Best figure rendering of the set** — painterly shading, detailed outfit, 0.5 stays stable (higher coherency ceiling than eps). Hires **amplifies** the reference's bg texture into diagonal streaks; palette drifts lighter than canon. |
+| vpred-style | v-pred | 0.6 | style | no | **Style transfer works** — reference palette (dark blue/purple/gold) and clean simple background; style mode doesn't inject the bg artifact. No identity carry (as designed); shading flat/cel-ish. |
+| vpred-cs | v-pred | 0.4 | character_style | no | **Coherent but hazy** — softest of the set, washed; 20 steps + dual dilution reads underdone. No blowout at 0.4 on v-pred. Dual adapter remains ~10× slower; keep steps capped. |
+| i2i | v-pred | — | img2img @ 0.55 | no | **Repaint path validated** — inherits official composition/values, re-renders in the model's hand; was the best result until the LoRA landed. |
+| flagship | v-pred | — | img2img @ 0.45 + **HSR v3 LoRA @ 0.7** | no | **★ THE recipe.** `official art, game cg` tags (no fan-artist tags) + style LoRA + official-composition repaint: iridescent multi-tone eyes, warm splash lighting, painterly fabric — closest to HSR light-cone finish produced. LoRA-weight findings: v3 @ 0.7 has soft lines (gallery "over-crisp" was the poster's setup); Official-Art LoRA @ 0.65 clean but weaker signature; v3 txt2img renders the game logo — use a weighted `(logo:1.3)` negative. |
 
 ## Conclusion
 

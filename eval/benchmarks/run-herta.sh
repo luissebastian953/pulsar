@@ -10,8 +10,13 @@ SPEC="$DIR/herta-style.json"
 OUT="$DIR/out"; mkdir -p "$OUT"
 LABEL="${1:-recipe}"
 
-# resolve + upload reference once; cache the blob id next to the spec
-REFPATH=$(python3 -c "import json,os; print(os.path.expanduser(json.load(open('$SPEC'))['reference_image']))")
+# resolve + upload reference once; cache the blob id next to the spec.
+# reference_image is spec-relative (vendored in this dir); absolute and
+# ~-paths still work.
+REFPATH=$(python3 -c "
+import json, os
+p = os.path.expanduser(json.load(open('$SPEC'))['reference_image'])
+print(p if os.path.isabs(p) else os.path.join('$DIR', p))")
 CACHE="$DIR/.ref-id"
 if [ ! -s "$CACHE" ] || ! curl -sf "$CORE/images/$(cat "$CACHE")" -o /dev/null; then
   curl -s -X POST -F "image=@$REFPATH" "$CORE/uploads" \
@@ -36,7 +41,14 @@ req.update(ov)
 char = req.pop('character', '').strip()
 body = (char + ', ' if char else '') + req['prompt']
 req['prompt'] = pre + body + post
-req['reference_id'] = ref
+# the uploaded blob is the img2img source for kind=img2img variants,
+# a Precise Reference otherwise; ref knobs don't apply to plain img2img
+if req.get('kind') == 'img2img':
+    req['image_id'] = ref
+    for k in ('ref_mode', 'ref_strength', 'ref_fidelity'):
+        req.pop(k, None)
+else:
+    req['reference_id'] = ref
 print(json.dumps(req))
 PY
 )

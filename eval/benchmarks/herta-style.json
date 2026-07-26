@@ -1,7 +1,7 @@
 {
   "name": "herta-style",
   "goal": "Match Honkai: Star Rail official / light-cone art style for The Herta (an HSR 3.0 character that post-dates Illustrious v0.1's 2023 cutoff, so identity must come from a reference or LoRA, not model knowledge).",
-  "reference_image": "~/Downloads/testing_the_herta.jpg",
+  "reference_image": "testing_the_herta.jpg",
   "base": {
     "prompt": "masterpiece, best quality, very aesthetic, highly detailed, absurdres, highres, incredibly detailed, highly detailed anime style, depth of field, colorful, high quality, cinematic lighting, detailed eye, gradient clothes, gradient lineart, soft style, soft outline, gradient, from front, looking at viewer, centered, full body",
     "character": "1girl, the herta (honkai: star rail), mature female, pale skin, smooth skin, very long hair, incredibly detailed hair, glossy hair, shiny hair, textured hair, gradient eyes, multicolored eyes, beautiful detailed eyes, blush, embarrassed, cute, dress",
@@ -32,13 +32,64 @@
     },
     {
       "label": "char035",
-      "note": "character-only + artist tags + hires (reference-only CEILING)",
+      "note": "character-only + artist tags + hires (reference-only CEILING on eps)",
       "overrides": {
         "ref_mode": "character",
         "ref_strength": 0.35,
         "hires": true,
         "prompt_prepend": "ciloranko, ask_(askzy), as109, ",
         "prompt_append": ", smooth shading, soft shading, blurry background"
+      }
+    },
+    {
+      "label": "vpred-char",
+      "note": "NoobAI v-pred + character ref 0.5 + hires — the validated best path",
+      "overrides": {
+        "lineage": "noobai", "checkpoint": "noobai-xl-vpred.safetensors",
+        "sampler": "euler", "scheduler": "normal", "cfg": 5.0, "steps": 28,
+        "ref_mode": "character", "ref_strength": 0.5, "hires": true,
+        "prompt_prepend": "ciloranko, ask_(askzy), as109, ",
+        "prompt_append": ", smooth shading, soft shading, blurry background"
+      }
+    },
+    {
+      "label": "vpred-style",
+      "note": "NoobAI v-pred + style-only ref — does the light-cone style transfer without identity?",
+      "overrides": {
+        "lineage": "noobai", "checkpoint": "noobai-xl-vpred.safetensors",
+        "sampler": "euler", "scheduler": "normal", "cfg": 5.0, "steps": 28,
+        "ref_mode": "style", "ref_strength": 0.6,
+        "prompt_append": ", smooth shading, soft shading"
+      }
+    },
+    {
+      "label": "vpred-cs",
+      "note": "NoobAI v-pred + character&style @ coherent band; 20 steps — dual adapter is ~10x slower on MPS, must fit the exec timeout",
+      "overrides": {
+        "lineage": "noobai", "checkpoint": "noobai-xl-vpred.safetensors",
+        "sampler": "euler", "scheduler": "normal", "cfg": 5.0, "steps": 20,
+        "ref_mode": "character_style", "ref_strength": 0.4
+      }
+    },
+    {
+      "label": "flagship",
+      "note": "THE recipe (2026-07-26): official-composition img2img + HSR v3 style LoRA @ 0.7 on NoobAI v-pred + official-art tags. Closest to HSR light-cone finish produced.",
+      "overrides": {
+        "lineage": "noobai", "checkpoint": "noobai-xl-vpred.safetensors",
+        "sampler": "euler", "scheduler": "normal", "cfg": 5.0, "steps": 28,
+        "kind": "img2img", "denoise": 0.45,
+        "loras": [{ "name": "honkai star rail_v3.safetensors", "strength": 0.7 }],
+        "prompt_prepend": "official art, game cg, "
+      }
+    },
+    {
+      "label": "i2i",
+      "note": "img2img on the official art itself: repaint in the model's hand at moderate denoise — style-pull litmus",
+      "overrides": {
+        "lineage": "noobai", "checkpoint": "noobai-xl-vpred.safetensors",
+        "sampler": "euler", "scheduler": "normal", "cfg": 5.0, "steps": 28,
+        "kind": "img2img", "denoise": 0.55,
+        "prompt_prepend": "ciloranko, ask_(askzy), as109, "
       }
     }
   ],
