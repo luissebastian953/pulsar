@@ -263,6 +263,53 @@ func TestApplyVpredCarriesIntoHires(t *testing.T) {
 	}
 }
 
+// TestApplyHiresScale: the refine pass upscales by spec.HiresScale, with
+// the 1.5 fragment default when older specs omit it.
+func TestApplyHiresScale(t *testing.T) {
+	base, err := BuildTxt2Img(loadTpl(t), spec(t), "ckpt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frag := loadFrag(t, FragHires, HiresSHA256)
+	s := spec(t)
+	s.HiresScale = 2.0
+	raw, err := ApplyHires(base, frag, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g Graph
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g[Hires.Upscale].Inputs["scale_by"]; got != 2.0 {
+		t.Errorf("scale_by = %v, want 2.0", got)
+	}
+	raw, err = ApplyHires(base, frag, spec(t)) // zero-value HiresScale
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g[Hires.Upscale].Inputs["scale_by"]; got != 1.5 {
+		t.Errorf("default scale_by = %v, want 1.5", got)
+	}
+	if got := g[Hires.Sampler].Inputs["denoise"]; got != 0.4 {
+		t.Errorf("default refine denoise = %v, want 0.4", got)
+	}
+	s.HiresDenoise = 0.5
+	raw, err = ApplyHires(base, frag, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g[Hires.Sampler].Inputs["denoise"]; got != 0.5 {
+		t.Errorf("refine denoise = %v, want 0.5", got)
+	}
+}
+
 func TestOutputRoles(t *testing.T) {
 	if roles, ok := OutputRoles("txt2img"); !ok || len(roles) != 1 || roles[""] != Txt2Img.Save {
 		t.Errorf("txt2img roles = %v, %v", roles, ok)

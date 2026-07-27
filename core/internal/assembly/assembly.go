@@ -33,10 +33,16 @@ type Request struct {
 	// RefFidelity 0..1 maps to the adapter's step range: how long the
 	// reference steers the denoise (NAI's Fidelity slider)
 	RefFidelity *float64 `json:"ref_fidelity,omitempty"`
-	// Hires: latent upscale 1.5x + refine pass (docs/tuning.md#quality-passes)
-	Hires       bool  `json:"hires,omitempty"`
-	QualityTags *bool `json:"quality_tags,omitempty"`
-	UCPreset    *bool `json:"uc_preset,omitempty"`
+	// Hires: pixel upscale + refine pass (docs/tuning.md#quality-passes)
+	Hires bool `json:"hires,omitempty"`
+	// HiresScale is the refine upscale factor, 1.1..2.0 (default 1.5 —
+	// "large"; 2.0 is the "ultra" tier). Requires Hires.
+	HiresScale *float64 `json:"hires_scale,omitempty"`
+	// HiresDenoise is the refine pass strength, 0.2..0.7 (default 0.4).
+	// Higher dissolves upscale grain/banding but redraws more. Requires Hires.
+	HiresDenoise *float64 `json:"hires_denoise,omitempty"`
+	QualityTags  *bool    `json:"quality_tags,omitempty"`
+	UCPreset     *bool    `json:"uc_preset,omitempty"`
 	// Characters get regional conditioning: each prompt applies only to
 	// its own column (2–3 characters; the base prompt stays global).
 	Characters []Character `json:"characters,omitempty"`
@@ -60,26 +66,28 @@ type Character struct {
 // Spec is the resolved parameter set, stored verbatim on the job row.
 // Same Seed + same Spec must reproduce the same image.
 type Spec struct {
-	Prompt      string      `json:"prompt"`
-	Negative    string      `json:"negative"`
-	Width       int         `json:"width"`
-	Height      int         `json:"height"`
-	Steps       int         `json:"steps"`
-	CFG         float64     `json:"cfg"`
-	Sampler     string      `json:"sampler"`
-	Scheduler   string      `json:"scheduler"`
-	CFGRescale  float64     `json:"cfg_rescale,omitempty"`
-	Seed        int64       `json:"seed"`
-	Denoise     float64     `json:"denoise,omitempty"`
-	RefStrength float64     `json:"ref_strength,omitempty"`
-	RefMode     string      `json:"ref_mode,omitempty"`
-	RefFidelity float64     `json:"ref_fidelity,omitempty"`
-	Hires       bool        `json:"hires,omitempty"`
-	Characters  []Character `json:"characters,omitempty"`
-	Loras       []Lora      `json:"loras,omitempty"`
-	Checkpoint  string      `json:"checkpoint,omitempty"`
-	BatchSize   int         `json:"batch_size"`
-	Lineage     string      `json:"lineage"`
+	Prompt       string      `json:"prompt"`
+	Negative     string      `json:"negative"`
+	Width        int         `json:"width"`
+	Height       int         `json:"height"`
+	Steps        int         `json:"steps"`
+	CFG          float64     `json:"cfg"`
+	Sampler      string      `json:"sampler"`
+	Scheduler    string      `json:"scheduler"`
+	CFGRescale   float64     `json:"cfg_rescale,omitempty"`
+	Seed         int64       `json:"seed"`
+	Denoise      float64     `json:"denoise,omitempty"`
+	RefStrength  float64     `json:"ref_strength,omitempty"`
+	RefMode      string      `json:"ref_mode,omitempty"`
+	RefFidelity  float64     `json:"ref_fidelity,omitempty"`
+	Hires        bool        `json:"hires,omitempty"`
+	HiresScale   float64     `json:"hires_scale,omitempty"`
+	HiresDenoise float64     `json:"hires_denoise,omitempty"`
+	Characters   []Character `json:"characters,omitempty"`
+	Loras        []Lora      `json:"loras,omitempty"`
+	Checkpoint   string      `json:"checkpoint,omitempty"`
+	BatchSize    int         `json:"batch_size"`
+	Lineage      string      `json:"lineage"`
 }
 
 type Options struct {
@@ -265,6 +273,30 @@ func Build(req Request, opts Options) (Spec, error) {
 		s.RefFidelity = *req.RefFidelity
 	}
 	s.Hires = req.Hires
+	if req.HiresScale != nil {
+		if !req.Hires {
+			return Spec{}, fmt.Errorf("hires_scale requires hires")
+		}
+		if *req.HiresScale < 1.1 || *req.HiresScale > 2.0 {
+			return Spec{}, fmt.Errorf("hires_scale must be 1.1..2.0")
+		}
+		s.HiresScale = *req.HiresScale
+	}
+	if s.Hires && s.HiresScale == 0 {
+		s.HiresScale = 1.5
+	}
+	if req.HiresDenoise != nil {
+		if !req.Hires {
+			return Spec{}, fmt.Errorf("hires_denoise requires hires")
+		}
+		if *req.HiresDenoise < 0.2 || *req.HiresDenoise > 0.7 {
+			return Spec{}, fmt.Errorf("hires_denoise must be 0.2..0.7")
+		}
+		s.HiresDenoise = *req.HiresDenoise
+	}
+	if s.Hires && s.HiresDenoise == 0 {
+		s.HiresDenoise = 0.4
+	}
 	if len(req.Loras) > 1 {
 		return Spec{}, fmt.Errorf("multiple LoRAs not yet supported")
 	}

@@ -20,7 +20,11 @@ const sampler = ref('euler_ancestral')
 const scheduler = ref('karras')
 const qualityTags = ref(true)
 const faceDetail = ref(true)
-const hires = ref(false)
+// size tier = the refine pass: normal (native bucket), large (x1.5), ultra
+// (x2.0). SDXL samples on-bucket only; bigger sizes are hires multiples.
+const sizeTier = ref<'normal' | 'large' | 'ultra'>('normal')
+const hires = computed(() => sizeTier.value !== 'normal')
+const hiresScale = computed(() => (sizeTier.value === 'ultra' ? 2.0 : 1.5))
 const loras = ref<string[]>([])
 const checkpoints = ref<string[]>([])
 const activeCheckpoint = ref('')
@@ -190,7 +194,8 @@ const promptText = computed(() => {
   return [...base, ...merge].join(', ')
 })
 
-const cost = computed(() => batch.value * (17 + (hires.value ? 8 : 0)))
+const cost = computed(() =>
+  batch.value * (17 + (sizeTier.value === 'ultra' ? 16 : hires.value ? 8 : 0)))
 
 function generate() {
   if (job.busy.value || !promptText.value) return
@@ -206,6 +211,7 @@ function generate() {
     scheduler: scheduler.value,
     quality_tags: qualityTags.value,
     hires: hires.value || undefined,
+    hires_scale: hires.value ? hiresScale.value : undefined,
   }
   if (loraName.value) {
     req.loras = [{ name: loraName.value, strength: loraStrength.value }]
@@ -550,9 +556,21 @@ const charBadge = computed(() =>
               <span class="flex-1 text-xs text-dim">Face detail pass</span>
               <ToggleSwitch v-model="faceDetail" title="Wired when the FaceDetailer workflow lands" />
             </div>
-            <div class="flex items-center">
-              <span class="flex-1 text-xs text-dim">High resolution</span>
-              <ToggleSwitch v-model="hires" title="Pixel-space upscale + refine pass for a smoother finish" />
+            <div>
+              <div class="mb-[5px] text-xs text-dim">Size</div>
+              <Dropdown
+                v-model="sizeTier"
+                aria-label="Size"
+                :options="[
+                  { value: 'normal', label: 'Normal (native)' },
+                  { value: 'large', label: 'Large (×1.5 refine)' },
+                  { value: 'ultra', label: 'Ultra (×2.0 refine)' },
+                ]"
+              />
+              <div class="mt-1 text-[10.5px] leading-relaxed text-faint">
+                Large and Ultra add a refine pass — smoother detail, roughly
+                2× the time. Ultra is heavy on unified memory.
+              </div>
             </div>
             <div v-if="loras.length" class="border-t border-line pt-3">
               <div class="mb-[5px] text-xs text-dim">Style / character LoRA</div>

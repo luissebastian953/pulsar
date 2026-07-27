@@ -348,6 +348,17 @@ func ApplyHires(graph json.RawMessage, frag *Fragment, spec assembly.Spec) (json
 	if !ok {
 		return nil, fmt.Errorf("hires: base sampler missing")
 	}
+	scale := spec.HiresScale
+	if scale == 0 {
+		scale = 1.5 // fragment default; specs from older jobs may omit it
+	}
+	if err := g.Set(Hires.Upscale, "scale_by", scale); err != nil {
+		return nil, err
+	}
+	denoise := spec.HiresDenoise
+	if denoise == 0 {
+		denoise = 0.4 // fragment default; specs from older jobs may omit it
+	}
 	steps := max(12, spec.Steps*3/5)
 	for input, value := range map[string]any{
 		"model":        base.Inputs["model"],
@@ -358,6 +369,7 @@ func ApplyHires(graph json.RawMessage, frag *Fragment, spec assembly.Spec) (json
 		"cfg":          spec.CFG,
 		"sampler_name": spec.Sampler,
 		"scheduler":    spec.Scheduler,
+		"denoise":      denoise,
 	} {
 		if err := g.Set(Hires.Sampler, input, value); err != nil {
 			return nil, err

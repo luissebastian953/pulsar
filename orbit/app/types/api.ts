@@ -50,6 +50,8 @@ export type GenerationRequest = {
   ref_mode?: 'character' | 'style' | 'character_style'
   ref_fidelity?: number
   hires?: boolean
+  // refine upscale factor 1.1..2.0 (default 1.5 = Large; 2.0 = Ultra)
+  hires_scale?: number
   // 2-3 entries: each prompt conditions its own column (regional);
   // reference_id per character needs exactly 2, both set
   characters?: { prompt: string, reference_id?: string, ref_strength?: number }[]

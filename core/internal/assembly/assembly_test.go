@@ -54,6 +54,51 @@ func TestLineageDefaults(t *testing.T) {
 	}
 }
 
+// TestHiresScale: the refine upscale factor defaults to 1.5 (large), caps
+// at 2.0 (ultra), and is meaningless without the hires pass.
+func TestHiresScale(t *testing.T) {
+	s, err := Build(Request{Prompt: "1girl", Hires: true}, opts())
+	if err != nil || s.HiresScale != 1.5 {
+		t.Errorf("hires default scale = %v (%v), want 1.5", s.HiresScale, err)
+	}
+	s, err = Build(Request{Prompt: "1girl", Hires: true, HiresScale: fPtr(2.0)}, opts())
+	if err != nil || s.HiresScale != 2.0 {
+		t.Errorf("ultra scale = %v (%v), want 2.0", s.HiresScale, err)
+	}
+	if s, err := Build(Request{Prompt: "1girl"}, opts()); err != nil || s.HiresScale != 0 {
+		t.Errorf("no hires must mean no scale, got %v (%v)", s.HiresScale, err)
+	}
+	if _, err := Build(Request{Prompt: "1girl", HiresScale: fPtr(1.5)}, opts()); err == nil {
+		t.Error("hires_scale without hires must be rejected")
+	}
+	for _, bad := range []float64{1.0, 2.1} {
+		if _, err := Build(Request{Prompt: "1girl", Hires: true, HiresScale: fPtr(bad)}, opts()); err == nil {
+			t.Errorf("hires_scale %v must be rejected", bad)
+		}
+	}
+}
+
+// TestHiresDenoise: refine strength defaults 0.4, bounded 0.2..0.7, and
+// requires the hires pass.
+func TestHiresDenoise(t *testing.T) {
+	s, err := Build(Request{Prompt: "1girl", Hires: true}, opts())
+	if err != nil || s.HiresDenoise != 0.4 {
+		t.Errorf("default = %v (%v), want 0.4", s.HiresDenoise, err)
+	}
+	s, err = Build(Request{Prompt: "1girl", Hires: true, HiresDenoise: fPtr(0.5)}, opts())
+	if err != nil || s.HiresDenoise != 0.5 {
+		t.Errorf("override = %v (%v), want 0.5", s.HiresDenoise, err)
+	}
+	if _, err := Build(Request{Prompt: "1girl", HiresDenoise: fPtr(0.4)}, opts()); err == nil {
+		t.Error("hires_denoise without hires must be rejected")
+	}
+	for _, bad := range []float64{0.1, 0.8} {
+		if _, err := Build(Request{Prompt: "1girl", Hires: true, HiresDenoise: fPtr(bad)}, opts()); err == nil {
+			t.Errorf("hires_denoise %v must be rejected", bad)
+		}
+	}
+}
+
 // TestCFGRescaleOverride: a request may tune the rescale (including an
 // explicit 0 to disable it on a v-pred lineage); out-of-range is refused.
 func TestCFGRescaleOverride(t *testing.T) {

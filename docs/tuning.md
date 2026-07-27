@@ -74,7 +74,11 @@ largest *perceived* quality jump for anime, because faces are small in frame and
 that's where people look. Costs a second pass. Default ON.
 
 **Hires fix** — built (`hires: true` on any non-pose kind; `patches/hires.json`).
-Generate → **pixel-space** lanczos 1.5× → re-encode → refine @ denoise 0.4.
+Generate → **pixel-space** lanczos upscale → re-encode → refine @ denoise 0.4.
+`hires_scale` picks the factor (1.1..2.0; default 1.5 = the "Large" size tier,
+2.0 = "Ultra"). Size tiers are refine multiples of the native bucket — SDXL
+never samples off-bucket. Ultra (2048²-class refine) is memory-heavy on MPS;
+treat it as a deploy-GPU tier.
 Empirical, from three live iterations: latent-space upscaling is a trap here —
 `nearest-exact` adds sharpening halos and `bislerp` produces horizontal
 streaking on MPS; pixel-space lanczos is clean. The "official-art finish"
