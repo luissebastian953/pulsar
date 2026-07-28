@@ -1,0 +1,6 @@
+# machine-local training artifacts; scripts + configs are the repo content
+dataset/
+sd-scripts/
+.venv/
+output/
+logs/

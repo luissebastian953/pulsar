@@ -1,0 +1,19 @@
+# kohya dataset config — character LoRA from a Danbooru scrape
+# (fetch-dataset.py writes image + caption pairs into one directory).
+[general]
+enable_bucket = true
+caption_extension = ".txt"
+# no caption shuffle: incompatible with --cache_text_encoder_outputs, and
+# the memory saved by caching matters more on unified memory. The trigger
+# word is first in every caption by construction (fetch-dataset.py).
+shuffle_caption = false
+
+[[datasets]]
+resolution = 1024
+min_bucket_reso = 640
+max_bucket_reso = 1536
+batch_size = 1
+
+  [[datasets.subsets]]
+  image_dir = "dataset/yixuan_(zenless_zone_zero)"
+  num_repeats = 4
