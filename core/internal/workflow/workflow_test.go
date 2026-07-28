@@ -239,6 +239,48 @@ func TestApplyVpredWrapsComposedModel(t *testing.T) {
 	}
 }
 
+// TestApplyLora2Chains: the second LoRA reads the first's outputs, and the
+// sampler + text encoders route through the end of the chain.
+func TestApplyLora2Chains(t *testing.T) {
+	base, err := BuildTxt2Img(loadTpl(t), spec(t), "ckpt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, err := ApplyLora(base, loadFrag(t, FragLora, LoraSHA256), "identity.safetensors", 0.8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := ApplyLora2(one, loadFrag(t, FragLora2, Lora2SHA256), "style.safetensors", 0.65)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g Graph
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstLink(t, g, Lora2.Loader, "model"); got != Lora.Loader {
+		t.Errorf("second loader model = %s, want chained off %s", got, Lora.Loader)
+	}
+	if got := g[Lora2.Loader].Inputs["lora_name"]; got != "style.safetensors" {
+		t.Errorf("lora2 name = %v", got)
+	}
+	if got := g[Lora2.Loader].Inputs["strength_model"]; got != 0.65 {
+		t.Errorf("lora2 strength = %v", got)
+	}
+	if got := firstLink(t, g, Txt2Img.Sampler, "model"); got != Lora2.Loader {
+		t.Errorf("sampler model = %s, want end of chain %s", got, Lora2.Loader)
+	}
+	for _, enc := range []string{Txt2Img.Positive, Txt2Img.Negative} {
+		if got := firstLink(t, g, enc, "clip"); got != Lora2.Loader {
+			t.Errorf("node %s clip = %s, want %s", enc, got, Lora2.Loader)
+		}
+	}
+	// and the first loader still carries its own file/strength
+	if got := g[Lora.Loader].Inputs["lora_name"]; got != "identity.safetensors" {
+		t.Errorf("lora1 name = %v", got)
+	}
+}
+
 // TestApplyVpredCarriesIntoHires: hires runs after the wrap and mirrors the
 // base sampler's model, so the refine pass samples the v-pred model too.
 func TestApplyVpredCarriesIntoHires(t *testing.T) {

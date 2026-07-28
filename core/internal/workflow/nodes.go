@@ -26,6 +26,9 @@ const (
 	FragLora   = "patches/lora.json"
 	LoraSHA256 = "sha256:2424741e63ed0fe10c09cc3312b45e7a8ab9ef5c619140a5416b56aaf126c78e"
 
+	FragLora2   = "patches/lora2.json"
+	Lora2SHA256 = "sha256:e51021bfc5296b9122809d015dd3b74a78a49a8a7ef9bf4c45e8df194e19d463"
+
 	FragHires   = "patches/hires.json"
 	HiresSHA256 = "sha256:3de5a80b08f6bb277ddc66f1ff86afdafbf198bfb80dea74c0f51e6855ef9b84"
 
@@ -169,6 +172,11 @@ var IPAdapter2 = struct {
 // Lora fragment (reserved 70): LoraLoader on the spine — model + clip flow
 // through it so both the sampler and the text encoders see the LoRA.
 var Lora = struct{ Loader string }{Loader: "70"}
+
+// Lora2 fragment (71): second LoraLoader chained off the first (character
+// identity + franchise style is the canonical pair). Composes only AFTER
+// the lora fragment — 71 reads 70's outputs.
+var Lora2 = struct{ Loader string }{Loader: "71"}
 
 // Vpred fragment (reserved 80–89): ModelSamplingDiscrete (v_prediction, zsnr)
 // + RescaleCFG wrap the final model — applied last in the model chain, after

@@ -99,6 +99,23 @@ func TestHiresDenoise(t *testing.T) {
 	}
 }
 
+// TestLoraLimits: two LoRAs compose (identity + style), three are refused,
+// and each entry keeps its own strength (default 0.8).
+func TestLoraLimits(t *testing.T) {
+	two := []Lora{{Name: "a.safetensors", Strength: fPtr(0.9)}, {Name: "b.safetensors"}}
+	s, err := Build(Request{Prompt: "1girl", Loras: two}, opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Loras) != 2 || *s.Loras[0].Strength != 0.9 || *s.Loras[1].Strength != 0.8 {
+		t.Errorf("loras = %+v", s.Loras)
+	}
+	three := append(two, Lora{Name: "c.safetensors"})
+	if _, err := Build(Request{Prompt: "1girl", Loras: three}, opts()); err == nil {
+		t.Error("three LoRAs must be refused")
+	}
+}
+
 // TestCFGRescaleOverride: a request may tune the rescale (including an
 // explicit 0 to disable it on a v-pred lineage); out-of-range is refused.
 func TestCFGRescaleOverride(t *testing.T) {

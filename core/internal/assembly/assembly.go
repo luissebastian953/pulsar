@@ -297,8 +297,10 @@ func Build(req Request, opts Options) (Spec, error) {
 	if s.Hires && s.HiresDenoise == 0 {
 		s.HiresDenoise = 0.4
 	}
-	if len(req.Loras) > 1 {
-		return Spec{}, fmt.Errorf("multiple LoRAs not yet supported")
+	// two chained loaders (e.g. character identity + franchise style);
+	// deeper stacks dilute both and wait for a real use case
+	if len(req.Loras) > 2 {
+		return Spec{}, fmt.Errorf("at most two LoRAs are supported")
 	}
 	for _, l := range req.Loras {
 		if strings.TrimSpace(l.Name) == "" {

@@ -65,6 +65,7 @@ type Server struct {
 	Regional3Frag   *workflow.Fragment
 	HiresFrag       *workflow.Fragment
 	LoraFrag        *workflow.Fragment
+	Lora2Frag       *workflow.Fragment
 	VpredFrag       *workflow.Fragment
 	// LoraDir / CheckpointDir list installed files for GET /loras and
 	// GET /checkpoints (empty = none listed).
@@ -351,6 +352,10 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 		l := spec.Loras[0]
 		graph, err = workflow.ApplyLora(graph, s.LoraFrag, l.Name, *l.Strength)
+		if err == nil && len(spec.Loras) == 2 {
+			l2 := spec.Loras[1]
+			graph, err = workflow.ApplyLora2(graph, s.Lora2Frag, l2.Name, *l2.Strength)
+		}
 	}
 	// v-pred wrap after the model-chain fragments (so it converts the
 	// composed model) but before hires (so the wrap carries into the refine

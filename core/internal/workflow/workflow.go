@@ -305,6 +305,25 @@ func ApplyLora(graph json.RawMessage, frag *Fragment, name string, strength floa
 	return json.Marshal(g)
 }
 
+// ApplyLora2 chains a second LoRA behind the first (node 71 reads 70's
+// outputs; the fragment rewires the sampler and text encoders to 71).
+// Compose only after ApplyLora.
+func ApplyLora2(graph json.RawMessage, frag *Fragment, name string, strength float64) (json.RawMessage, error) {
+	g, err := merge(graph, frag)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.Set(Lora2.Loader, "lora_name", name); err != nil {
+		return nil, err
+	}
+	for _, in := range []string{"strength_model", "strength_clip"} {
+		if err := g.Set(Lora2.Loader, in, strength); err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(g)
+}
+
 // ApplyVpred wraps the final model in ModelSamplingDiscrete (v_prediction,
 // zsnr) + RescaleCFG — required for v-pred lineages (without it, output is
 // garbage, not degraded). It reads whatever the base sampler's model link

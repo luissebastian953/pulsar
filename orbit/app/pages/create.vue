@@ -48,6 +48,9 @@ watch(lineage, (l) => {
 })
 const loraName = ref('')
 const loraStrength = ref(0.8)
+// second slot chains behind the first (character identity + franchise style)
+const lora2Name = ref('')
+const lora2Strength = ref(0.65)
 
 const folds = reactive({ und: false, chars: false, ref: false, i2i: false, adv: false })
 
@@ -215,6 +218,9 @@ function generate() {
   }
   if (loraName.value) {
     req.loras = [{ name: loraName.value, strength: loraStrength.value }]
+    if (lora2Name.value && lora2Name.value !== loraName.value) {
+      req.loras.push({ name: lora2Name.value, strength: lora2Strength.value })
+    }
   }
   if (activeCheckpoint.value) req.checkpoint = activeCheckpoint.value
   req.lineage = lineage.value
@@ -580,6 +586,15 @@ const charBadge = computed(() =>
                 :options="[{ value: '', label: 'None' }, ...loras.map(l => ({ value: l, label: l.replace(/\.(safetensors|pt)$/, '') }))]"
               />
               <SliderRow v-if="loraName" v-model="loraStrength" label="LoRA strength" :min="0" :max="1.5" :step="0.05" :decimals="2" class="mt-2" />
+              <template v-if="loraName">
+                <div class="mb-[5px] mt-3 text-xs text-dim">Second LoRA (chained)</div>
+                <Dropdown
+                  v-model="lora2Name"
+                  aria-label="Second LoRA"
+                  :options="[{ value: '', label: 'None' }, ...loras.filter(l => l !== loraName).map(l => ({ value: l, label: l.replace(/\.(safetensors|pt)$/, '') }))]"
+                />
+                <SliderRow v-if="lora2Name" v-model="lora2Strength" label="Second strength" :min="0" :max="1.5" :step="0.05" :decimals="2" class="mt-2" />
+              </template>
             </div>
             <div class="text-[11.5px] leading-relaxed text-faint">
               These defaults are set for {{ modelName }}. Switching models

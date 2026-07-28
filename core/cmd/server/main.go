@@ -116,6 +116,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("load workflow fragment: %v", err)
 	}
+	lora2Frag, err := workflow.LoadFragment(workflowsDir, workflow.FragLora2, workflow.Lora2SHA256)
+	if err != nil {
+		log.Fatalf("load workflow fragment: %v", err)
+	}
 	vpredFrag, err := workflow.LoadFragment(workflowsDir, workflow.FragVpred, workflow.VpredSHA256)
 	if err != nil {
 		log.Fatalf("load workflow fragment: %v", err)
@@ -221,7 +225,7 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2Frag, IPAdapterCSFrag: ipaCSFrag, Regional2Frag: reg2Frag, HiresFrag: hiresFrag, LoraFrag: loraFrag, VpredFrag: vpredFrag, LoraDir: envOr("LORA_DIR", "../comfy/models/loras"), CheckpointDir: envOr("CHECKPOINT_DIR", "../comfy/models/checkpoints"), Regional3Frag: reg3Frag,
+			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2Frag, IPAdapterCSFrag: ipaCSFrag, Regional2Frag: reg2Frag, HiresFrag: hiresFrag, LoraFrag: loraFrag, Lora2Frag: lora2Frag, VpredFrag: vpredFrag, LoraDir: envOr("LORA_DIR", "../comfy/models/loras"), CheckpointDir: envOr("CHECKPOINT_DIR", "../comfy/models/checkpoints"), Regional3Frag: reg3Frag,
 			Cfg: api.Config{
 				Lineage: lineage, Checkpoint: checkpoint,
 				CORSOrigins:    splitNonEmpty(corsOrigins),
