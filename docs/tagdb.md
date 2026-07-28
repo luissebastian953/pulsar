@@ -123,3 +123,26 @@ accurate than grounding against everything. That's why `/pose` passes
 
 `GET /tags?q=&subset=` returns `{canonical, category, count}`. Category drives pill
 colour in the editor. Rank by `post_count`. Cache hot prefixes in memory.
+
+## Anchors — post-cutoff characters render by description
+
+A character tag whose `danbooru_created_at` post-dates the lineage's knowledge
+cutoff names someone the model never saw: autocomplete validates honestly
+(`newer_than_model`), the render improvises a stranger. But the model knows
+every design *component* — only the name→appearance mapping is missing.
+
+`autoAnchor` (api, generation-time) closes most of that gap automatically: for
+each post-cutoff character tag in the prompt it samples the character's solo
+posts on Danbooru, aggregates general-tag frequency, keeps design vocabulary
+(appearance segments only — never pose/composition/meta) appearing in ≥35% of
+posts, and splices up to 12 anchors after the tag. Cached per tag; every
+failure degrades to the unmodified prompt.
+
+Anchors capture what's *invariant* about a character — hair and face survive
+the frequency floor, outfit variants usually don't. The precision path for
+exact outfits stays a character LoRA or a reference image.
+
+Tags seeded before the freshness migration have NULL `danbooru_created_at`;
+the anchor path lazily backfills the date through Live (`EnsureCreatedAt`),
+which also heals the autocomplete flag — one generation request repairs the
+tag for everyone.

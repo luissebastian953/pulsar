@@ -133,6 +133,14 @@ func (s *Store) resolveName(ctx context.Context, name string, poseOnly bool) (*R
 }
 
 // UpsertTag is the live-validation write-through path.
+// SetCreatedAt backfills freshness for a tag seeded before the
+// danbooru_created_at migration (see Live.EnsureCreatedAt).
+func (s *Store) SetCreatedAt(ctx context.Context, name string, createdAt *time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE tags SET danbooru_created_at = $2 WHERE name = $1`, name, createdAt)
+	return err
+}
+
 func (s *Store) UpsertTag(ctx context.Context, name, category string, count int, createdAt *time.Time, alias string) error {
 	if _, err := s.pool.Exec(ctx, `
 		INSERT INTO tags (name, category, post_count, danbooru_created_at)

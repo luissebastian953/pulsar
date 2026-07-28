@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
@@ -230,6 +231,11 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	lineage := s.Cfg.Lineage
 	if req.Lineage != "" {
 		lineage = req.Lineage // validated in assembly.Build (unknown → 400)
+	}
+	// post-cutoff characters render by description: inject their Danbooru
+	// design vocabulary after the character tag (docs/tagdb.md#anchors)
+	if s.Live != nil {
+		req.Prompt = s.autoAnchor(r.Context(), req.Prompt, lineage)
 	}
 	spec, err := assembly.Build(req.Request, assembly.Options{
 		Lineage: lineage, Seed: seed,
@@ -621,6 +627,61 @@ type tagView struct {
 	Count          int    `json:"count"`
 	Stage          string `json:"stage,omitempty"`
 	NewerThanModel bool   `json:"newer_than_model,omitempty"`
+}
+
+// autoAnchor: for each character tag in the prompt that post-dates the
+// lineage's knowledge cutoff, splice its Danbooru design vocabulary in
+// right after the tag — the model can't know the name but knows every
+// component. Missing created_at dates (pre-freshness seeds) backfill
+// through Live, which also heals the autocomplete newer_than_model flag.
+// Every failure degrades to the unmodified prompt; anchoring never blocks
+// a generation.
+func (s *Server) autoAnchor(ctx context.Context, prompt, lineage string) string {
+	cutoff, ok := assembly.KnowledgeCutoff(lineage)
+	if !ok || strings.TrimSpace(prompt) == "" {
+		return prompt
+	}
+	parts := strings.Split(prompt, ",")
+	present := make(map[string]bool, len(parts))
+	for _, p := range parts {
+		present[tags.Normalize(p)] = true
+	}
+	var out []string
+	for _, p := range parts {
+		out = append(out, p)
+		canonical := tags.Normalize(p)
+		if canonical == "" {
+			continue
+		}
+		res, err := s.Tags.Resolve(ctx, canonical, false)
+		if err != nil || res == nil || res.Category != "character" ||
+			(res.Stage != "exact" && res.Stage != "alias") {
+			continue
+		}
+		created := res.CreatedAt
+		if created == nil {
+			if created, err = s.Live.EnsureCreatedAt(ctx, res.Canonical); err != nil {
+				log.Printf("api: anchor backfill %q: %v", res.Canonical, err)
+				continue
+			}
+		}
+		if created == nil || !created.After(cutoff) {
+			continue // the model learned this character; no anchors needed
+		}
+		anchors, err := s.Live.DesignAnchors(ctx, res.Canonical, present)
+		if err != nil {
+			log.Printf("api: design anchors %q: %v", res.Canonical, err)
+			continue
+		}
+		for _, a := range anchors {
+			present[a] = true
+			out = append(out, " "+strings.ReplaceAll(a, "_", " "))
+		}
+		if len(anchors) > 0 {
+			log.Printf("api: anchored post-cutoff character %q with %d design tags", res.Canonical, len(anchors))
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 func (s *Server) newerThanModel(createdAt *time.Time) bool {

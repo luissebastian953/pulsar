@@ -25,6 +25,8 @@ type Live struct {
 	// serializes lookups: politeness + de facto single-flight
 	mu   sync.Mutex
 	miss map[string]time.Time // negative cache: name → expiry
+	// design-anchor cache: post-cutoff characters are rare and stable
+	anchors map[string][]string
 }
 
 const missTTL = 10 * time.Minute
