@@ -4,3 +4,4 @@ sd-scripts/
 .venv/
 output/
 logs/
+pack-*.toml
