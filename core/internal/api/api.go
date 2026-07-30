@@ -257,7 +257,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			} else if id != "" {
 				req.RefID = id
 				if req.RefStrength == nil {
-					d := 0.55 // identity assist, prompt keeps the scene
+					d := 0.55 // v-pred char-mode stable band tops out ~0.55 (docs/tuning.md)
 					req.RefStrength = &d
 				}
 				if req.RefFidelity == nil {

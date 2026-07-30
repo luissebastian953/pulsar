@@ -87,11 +87,35 @@ func pickConsensusReference(posts []refPost, canonical string) *refPost {
 		if !ok {
 			continue
 		}
-		if best == nil || p.Score > best.Score {
+		if best == nil || effectiveScore(p) > effectiveScore(best) {
 			best = p
 		}
 	}
 	return best
+}
+
+// effectiveScore biases toward reference-friendly compositions: a neutral
+// standing shot conditions identity far better than a dramatic angle,
+// which leaks pose/perspective into the render (NAI's own guidance:
+// full-body standing on a basic background — docs/research-novelai.md §2).
+func effectiveScore(p *refPost) int {
+	s := p.Score
+	tags := " " + p.TagGen + " "
+	for _, t := range []string{"standing", "simple_background", "white_background", "grey_background"} {
+		if strings.Contains(tags, " "+t+" ") {
+			s += 40
+		}
+	}
+	for _, t := range []string{"from_below", "from_behind", "from_above", "lying", "chibi", "dutch_angle", "foreshortening"} {
+		if strings.Contains(tags, " "+t+" ") {
+			s -= 60
+		}
+	}
+	// default costume is the identity; alternates only when nothing else
+	if strings.Contains(tags, " alternate_costume ") || strings.Contains(tags, " official_alternate_costume ") {
+		s -= 40
+	}
+	return s
 }
 
 func hasAny(spacePadded string, set map[string]bool) bool {

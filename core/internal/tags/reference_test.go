@@ -36,6 +36,15 @@ func TestPickConsensusReference(t *testing.T) {
 		t.Fatalf("forbidden-tagged post must not win, picked %+v", got)
 	}
 
+	// composition bias: a standing/simple-background exemplar beats a
+	// higher-raw-score dramatic angle (pose leaks into the render)
+	posts = append(posts,
+		post(10, 39, "g", "jpg", 1200, char, "black_hair long_hair from_below sitting"),
+		post(11, 18, "g", "jpg", 1200, char, "black_hair long_hair standing simple_background grey_background"))
+	if got := pickConsensusReference(posts, char); got == nil || got.ID != 11 {
+		t.Fatalf("composition bias failed, picked %+v", got)
+	}
+
 	// no eligible candidate → nil, never a forced pick
 	if got := pickConsensusReference([]refPost{post(9, 5, "e", "jpg", 1200, char, "black_hair")}, char); got != nil {
 		t.Fatalf("expected nil, got %+v", got)
