@@ -165,3 +165,11 @@ character tag, forbidden tags excluded. The bytes then flow through the
 SAME ingest path as user uploads — normalize, then the compliance hook,
 fail closed. `auto_reference: false` disables per request. Blob ids cache
 per character for the process lifetime.
+
+Artifact note (tuned live, three-variant sweep): the character-mode adapter
+bleeds its exemplar's texture into under-specified regions — a sparse scene
+("blue sky") renders streaky. **Dense scene vocabulary is the fix** (e.g.
+`garden, flower field, trees, fountain, stone path, clouds`): the prompt
+outvotes the adapter wherever it has something concrete to say. The hires
+refine pass then absorbs the remainder into clean rendering. Auto-reference
+defaults (strength 0.55, fidelity 0.5) stay as shipped.
