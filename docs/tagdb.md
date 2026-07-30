@@ -146,3 +146,22 @@ Tags seeded before the freshness migration have NULL `danbooru_created_at`;
 the anchor path lazily backfills the date through Live (`EnsureCreatedAt`),
 which also heals the autocomplete flag — one generation request repairs the
 tag for everyone.
+
+### Auto-reference — the escalation above anchors
+
+Anchors carry the palette, not the person (verified across four franchises:
+trait-checklist renders still read as the wrong character). When a
+post-cutoff character is detected and the request brought no reference or
+image of its own, the API escalates: fetch the character's **consensus
+exemplar** from Danbooru and attach it as a character-mode Precise Reference
+(strength 0.55 — identity assist; the prompt keeps the scene).
+
+Consensus exemplar = the top-scored solo post whose OWN tags agree with the
+character's dominant hair-design tags (≥50% of sampled posts). Score alone
+picks popular alt-outfit or mistagged art — a pink-haired outlier for a
+black-haired character taught us that; requiring design agreement keeps the
+pick canonical. Gates at the source: rating g/s, png/jpeg only, single
+character tag, forbidden tags excluded. The bytes then flow through the
+SAME ingest path as user uploads — normalize, then the compliance hook,
+fail closed. `auto_reference: false` disables per request. Blob ids cache
+per character for the process lifetime.

@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"pulsar/core/internal/assembly"
@@ -72,6 +73,11 @@ type Server struct {
 	LoraDir       string
 	CheckpointDir string
 	Cfg           Config
+
+	// auto-reference blob cache: post-cutoff characters are rare and their
+	// consensus exemplar is stable for a process lifetime
+	autoRefMu sync.Mutex
+	autoRefs  map[string]string // canonical → blob id
 }
 
 func (s *Server) Handler() http.Handler {
@@ -120,6 +126,10 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		// with a matching Checkpoint — a v-pred checkpoint on an eps lineage
 		// (or vice versa) produces garbage (docs/tuning.md).
 		Lineage string `json:"lineage"`
+		// AutoReference (default on) escalates a post-cutoff character to a
+		// consensus Danbooru reference image when no reference/image was
+		// given (docs/tagdb.md#anchors). false = anchors only.
+		AutoReference *bool `json:"auto_reference"`
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
@@ -234,9 +244,32 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		lineage = req.Lineage // validated in assembly.Build (unknown → 400)
 	}
 	// post-cutoff characters render by description: inject their Danbooru
-	// design vocabulary after the character tag (docs/tagdb.md#anchors)
+	// design vocabulary after the character tag, then escalate to a
+	// consensus reference image — text carries the palette, pixels carry
+	// the identity (docs/tagdb.md#anchors)
 	if s.Live != nil {
-		req.Prompt = s.autoAnchor(r.Context(), req.Prompt, lineage)
+		var newer []string
+		req.Prompt, newer = s.autoAnchor(r.Context(), req.Prompt, lineage)
+		if len(newer) > 0 && req.Kind == "txt2img" && req.RefID == "" && req.ImageID == "" &&
+			charRefs == 0 && (req.AutoReference == nil || *req.AutoReference) {
+			if id, err := s.autoReference(r.Context(), newer[0]); err != nil {
+				log.Printf("api: auto reference %q: %v", newer[0], err)
+			} else if id != "" {
+				req.RefID = id
+				if req.RefStrength == nil {
+					d := 0.55 // identity assist, prompt keeps the scene
+					req.RefStrength = &d
+				}
+				if req.RefFidelity == nil {
+					f := 0.5
+					req.RefFidelity = &f
+				}
+				if req.RefMode == "" {
+					req.RefMode = "character"
+				}
+				log.Printf("api: auto reference attached for %q (blob %s)", newer[0], id)
+			}
+		}
 	}
 	spec, err := assembly.Build(req.Request, assembly.Options{
 		Lineage: lineage, Seed: seed,
@@ -640,11 +673,13 @@ type tagView struct {
 // component. Missing created_at dates (pre-freshness seeds) backfill
 // through Live, which also heals the autocomplete newer_than_model flag.
 // Every failure degrades to the unmodified prompt; anchoring never blocks
-// a generation.
-func (s *Server) autoAnchor(ctx context.Context, prompt, lineage string) string {
+// a generation. Also returns the post-cutoff character tags it found, so
+// the caller can escalate to an auto reference.
+func (s *Server) autoAnchor(ctx context.Context, prompt, lineage string) (string, []string) {
+	var newer []string
 	cutoff, ok := assembly.KnowledgeCutoff(lineage)
 	if !ok || strings.TrimSpace(prompt) == "" {
-		return prompt
+		return prompt, nil
 	}
 	parts := strings.Split(prompt, ",")
 	present := make(map[string]bool, len(parts))
@@ -673,6 +708,7 @@ func (s *Server) autoAnchor(ctx context.Context, prompt, lineage string) string 
 		if created == nil || !created.After(cutoff) {
 			continue // the model learned this character; no anchors needed
 		}
+		newer = append(newer, res.Canonical)
 		anchors, err := s.Live.DesignAnchors(ctx, res.Canonical, present)
 		if err != nil {
 			log.Printf("api: design anchors %q: %v", res.Canonical, err)
@@ -686,7 +722,54 @@ func (s *Server) autoAnchor(ctx context.Context, prompt, lineage string) string 
 			log.Printf("api: anchored post-cutoff character %q with %d design tags", res.Canonical, len(anchors))
 		}
 	}
-	return strings.Join(out, ",")
+	return strings.Join(out, ","), newer
+}
+
+// autoReference resolves a post-cutoff character to a reference blob: the
+// consensus Danbooru exemplar, pulled through the SAME ingest path as user
+// uploads — normalize (strips metadata) then the compliance hook, fail
+// closed (CLAUDE.md: image ingest is one path). Empty id = no suitable or
+// permitted reference; the caller degrades to anchors only.
+func (s *Server) autoReference(ctx context.Context, canonical string) (string, error) {
+	s.autoRefMu.Lock()
+	if id, ok := s.autoRefs[canonical]; ok {
+		s.autoRefMu.Unlock()
+		if _, _, err := s.blobDims(id); err == nil {
+			return id, nil
+		} // blob vanished (data dir reset) — refetch below
+	} else {
+		s.autoRefMu.Unlock()
+	}
+
+	data, postID, err := s.Live.ConsensusReference(ctx, canonical, ingest.MaxBytes)
+	if err != nil || data == nil {
+		return "", err
+	}
+	norm, err := ingest.Normalize(data)
+	if err != nil {
+		return "", fmt.Errorf("post %d: %w", postID, err)
+	}
+	dec, err := s.Checker.CheckUpload(ctx, norm.PNG)
+	if err != nil {
+		return "", fmt.Errorf("compliance unavailable: %w", err)
+	}
+	if !dec.Allowed {
+		return "", fmt.Errorf("post %d rejected: %s", postID, dec.Reason)
+	}
+	id, err := newUploadID()
+	if err != nil {
+		return "", err
+	}
+	if err := s.Blobs.Put(id, norm.PNG); err != nil {
+		return "", err
+	}
+	s.autoRefMu.Lock()
+	if s.autoRefs == nil {
+		s.autoRefs = make(map[string]string)
+	}
+	s.autoRefs[canonical] = id
+	s.autoRefMu.Unlock()
+	return id, nil
 }
 
 func (s *Server) newerThanModel(createdAt *time.Time) bool {
