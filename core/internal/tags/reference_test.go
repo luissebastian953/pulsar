@@ -53,3 +53,19 @@ func TestPickConsensusReference(t *testing.T) {
 		t.Fatalf("empty input must yield nil")
 	}
 }
+
+// TestFullBody: framing comes from tags, never canvas shape.
+func TestFullBody(t *testing.T) {
+	for gen, want := range map[string]bool{
+		"black_hair full_body standing": true,
+		"black_hair cowboy_shot":        true,
+		"black_hair upper_body":         false,
+		"black_hair portrait full_body": false, // face-framing tag wins
+		"black_hair standing":           false, // unknown framing: don't crop
+	} {
+		p := refPost{TagGen: gen}
+		if got := p.FullBody(); got != want {
+			t.Errorf("FullBody(%q) = %v, want %v", gen, got, want)
+		}
+	}
+}

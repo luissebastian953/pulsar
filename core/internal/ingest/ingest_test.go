@@ -59,13 +59,16 @@ func TestBustCrop(t *testing.T) {
 		t.Errorf("tall crop = %dx%d (%v), want 400x360", cfg.Width, cfg.Height, err)
 	}
 
+	// square canvases crop too — the CALLER gates by framing tags, since
+	// canvas aspect is not a reliable proxy for subject framing
 	square := encodePNG(t, 800, 800)
 	out, err = BustCrop(square)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(out, square) {
-		t.Error("squarish input must pass through unchanged")
+	cfg, _, err = image.DecodeConfig(bytes.NewReader(out))
+	if err != nil || cfg.Height != 360 {
+		t.Errorf("square crop height = %d (%v), want 360", cfg.Height, err)
 	}
 }
 

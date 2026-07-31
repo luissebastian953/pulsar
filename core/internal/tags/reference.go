@@ -115,7 +115,24 @@ func effectiveScore(p *refPost) int {
 	if strings.Contains(tags, " alternate_costume ") || strings.Contains(tags, " official_alternate_costume ") {
 		s -= 40
 	}
+	// face-rich framings condition identity best (full_body imports outfit)
+	for _, t := range []string{"upper_body", "portrait"} {
+		if strings.Contains(tags, " "+t+" ") {
+			s += 30
+		}
+	}
 	return s
+}
+
+// FullBody reports whether the exemplar depicts the whole figure — the
+// caller bust-crops those, because canvas aspect is NOT a reliable proxy
+// (a square official render holds a full body with margins).
+func (p *refPost) FullBody() bool {
+	tags := " " + p.TagGen + " "
+	if strings.Contains(tags, " upper_body ") || strings.Contains(tags, " portrait ") {
+		return false
+	}
+	return strings.Contains(tags, " full_body ") || strings.Contains(tags, " cowboy_shot ")
 }
 
 func hasAny(spacePadded string, set map[string]bool) bool {
@@ -130,41 +147,41 @@ func hasAny(spacePadded string, set map[string]bool) bool {
 // ConsensusReference fetches the character's solo posts, picks the
 // consensus-agreeing exemplar, and downloads it. maxBytes bounds the
 // download (pass ingest.MaxBytes). nil bytes = no suitable reference.
-func (l *Live) ConsensusReference(ctx context.Context, canonical string, maxBytes int64) ([]byte, int, error) {
+func (l *Live) ConsensusReference(ctx context.Context, canonical string, maxBytes int64) ([]byte, int, bool, error) {
 	q := url.Values{}
 	q.Set("tags", canonical+" solo")
 	q.Set("limit", "50")
 	var posts []refPost
 	if err := l.getJSON(ctx, "/posts.json?"+q.Encode(), &posts); err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	p := pickConsensusReference(posts, canonical)
 	if p == nil {
-		return nil, 0, nil
+		return nil, 0, false, nil
 	}
 	u := p.LargeURL
 	if u == "" {
 		u = p.FileURL
 	}
 	if u == "" {
-		return nil, 0, nil
+		return nil, 0, false, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	req.Header.Set("User-Agent", "pulsar/1.0 (auto reference)")
 	resp, err := l.http.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("reference download: %s", resp.Status)
+		return nil, 0, false, fmt.Errorf("reference download: %s", resp.Status)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
-	return data, p.ID, nil
+	return data, p.ID, p.FullBody(), nil
 }
