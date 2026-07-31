@@ -46,3 +46,34 @@ func TestNormalizeRejects(t *testing.T) {
 		t.Error("oversize must be rejected")
 	}
 }
+
+// TestBustCrop: tall images keep only the top portion; squarish pass through.
+func TestBustCrop(t *testing.T) {
+	tall := encodePNG(t, 400, 800)
+	out, err := BustCrop(tall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(out))
+	if err != nil || cfg.Width != 400 || cfg.Height != 360 {
+		t.Errorf("tall crop = %dx%d (%v), want 400x360", cfg.Width, cfg.Height, err)
+	}
+
+	square := encodePNG(t, 800, 800)
+	out, err = BustCrop(square)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out, square) {
+		t.Error("squarish input must pass through unchanged")
+	}
+}
+
+func encodePNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}

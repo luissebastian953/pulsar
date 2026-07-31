@@ -66,3 +66,27 @@ func Normalize(data []byte) (*Result, error) {
 	}
 	return &Result{PNG: buf.Bytes(), Width: w, Height: h}, nil
 }
+
+// BustCrop keeps the top portion of a notably tall image — for reference
+// conditioning, identity lives in the face; a full-body gown imports its
+// fabric texture into everything the adapter touches (verified live:
+// cropping the exemplar to the bust eliminated the veil artifact).
+// Squarish images pass through untouched.
+func BustCrop(data []byte) ([]byte, error) {
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	b := src.Bounds()
+	if b.Dy() <= b.Dx()*5/4 {
+		return data, nil // not tall enough to carry a full outfit
+	}
+	crop := image.Rect(b.Min.X, b.Min.Y, b.Max.X, b.Min.Y+b.Dy()*45/100)
+	dst := image.NewRGBA(image.Rect(0, 0, crop.Dx(), crop.Dy()))
+	draw.Copy(dst, image.Point{}, src, crop, draw.Src, nil)
+	var out bytes.Buffer
+	if err := png.Encode(&out, dst); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}

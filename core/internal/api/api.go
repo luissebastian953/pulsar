@@ -745,6 +745,11 @@ func (s *Server) autoReference(ctx context.Context, canonical string) (string, e
 	if err != nil || data == nil {
 		return "", err
 	}
+	// identity lives in the face; a full-body exemplar imports its outfit
+	// texture into everything (docs/tagdb.md#anchors)
+	if cropped, err := ingest.BustCrop(data); err == nil {
+		data = cropped
+	}
 	norm, err := ingest.Normalize(data)
 	if err != nil {
 		return "", fmt.Errorf("post %d: %w", postID, err)
