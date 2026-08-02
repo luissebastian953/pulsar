@@ -91,6 +91,41 @@ func (s *Store) finish(ctx context.Context, sql string, args ...any) error {
 	return nil
 }
 
+// DeleteJob removes a single job row. Returns ErrNotFound when no such job
+// exists (including a malformed id, which never matches). The caller frees the
+// job's blobs separately.
+func (s *Store) DeleteJob(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM jobs WHERE id = $1::uuid`, id)
+	if err != nil {
+		return ErrNotFound // invalid uuid syntax → nothing to delete
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteTerminal clears finished jobs (done/failed/blocked), leaving any
+// in-flight (queued/running) job untouched so a delete-all never orphans a
+// generation mid-run. Returns the deleted ids so their blobs can be freed.
+func (s *Store) DeleteTerminal(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`DELETE FROM jobs WHERE state IN ('done','failed','blocked') RETURNING id::text`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Store) Get(ctx context.Context, id string) (*Job, error) {
 	j := &Job{}
 	err := s.pool.QueryRow(ctx,

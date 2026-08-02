@@ -301,3 +301,33 @@ func TestAllBucketsAccepted(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckpointIsVpred pins the prediction-type inference used to refuse a
+// lineage/checkpoint mismatch at request time (the noobai-lineage +
+// illustrious-eps-checkpoint pairing that renders a flat grey field and then
+// trips the output classifier as a false compliance block).
+func TestCheckpointIsVpred(t *testing.T) {
+	cases := []struct {
+		name      string
+		wantVpred bool
+		wantKnown bool
+	}{
+		{"noobai-xl-vpred.safetensors", true, true},
+		{"someModel-v-pred.safetensors", true, true},
+		{"illustrious-xl.safetensors", false, true}, // the case that broke
+		{"noobai-xl-eps.safetensors", false, true},
+		{"waiNSFWIllustrious_v110.safetensors", false, true},
+		{"some-random-anime-merge.safetensors", false, false}, // unclassifiable → never rejected
+	}
+	for _, c := range cases {
+		gotVpred, gotKnown := CheckpointIsVpred(c.name)
+		if gotVpred != c.wantVpred || gotKnown != c.wantKnown {
+			t.Errorf("CheckpointIsVpred(%q) = (%v, %v), want (%v, %v)",
+				c.name, gotVpred, gotKnown, c.wantVpred, c.wantKnown)
+		}
+	}
+	// the load-bearing property: a vpred marker must win over an eps/family marker
+	if v, known := CheckpointIsVpred("illustrious-vpred-finetune.safetensors"); !v || !known {
+		t.Errorf("vpred marker must win over family marker; got (%v, %v)", v, known)
+	}
+}

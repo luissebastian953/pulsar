@@ -93,6 +93,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /tags/lookup", s.handleTagLookup)
 	mux.HandleFunc("POST /translate", s.handleTranslate)
 	mux.HandleFunc("GET /history", s.handleHistory)
+	mux.HandleFunc("DELETE /history", s.handleDeleteHistory)
+	mux.HandleFunc("DELETE /history/{id}", s.handleDeleteHistoryItem)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	if len(s.Cfg.CORSOrigins) > 0 {
 		return cors(mux, s.Cfg.CORSOrigins)
@@ -298,6 +300,22 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ckpt = req.Checkpoint
+	}
+	// Refuse a lineage/checkpoint prediction-type mismatch before it reaches the
+	// GPU: a v-pred lineage on an eps checkpoint (or vice versa) renders a flat
+	// field that then trips the output classifier as a false compliance block
+	// (docs/tuning.md). Only rejected when the checkpoint name is classifiable.
+	if ckptVpred, known := assembly.CheckpointIsVpred(ckpt); known && ckptVpred != assembly.Vpred(spec.Lineage) {
+		pred := func(v bool) string {
+			if v {
+				return "v-prediction"
+			}
+			return "eps"
+		}
+		httpError(w, http.StatusBadRequest, fmt.Sprintf(
+			"lineage %q is %s but checkpoint %s is %s; pick a matching checkpoint (settings don't transfer between lineages)",
+			spec.Lineage, pred(assembly.Vpred(spec.Lineage)), strconv.Quote(ckpt), pred(ckptVpred)))
+		return
 	}
 	spec.Checkpoint = ckpt
 
@@ -838,6 +856,36 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		out = append(out, p)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
+}
+
+// handleDeleteHistoryItem removes one generation and its image blob(s).
+func (s *Server) handleDeleteHistoryItem(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.Store.DeleteJob(r.Context(), id); err != nil {
+		httpError(w, http.StatusNotFound, "no such job")
+		return
+	}
+	if err := s.Blobs.Delete(id); err != nil {
+		log.Printf("api: delete blob %s: %v", id, err) // row is gone; orphan file is non-fatal
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDeleteHistory clears finished generations (in-flight jobs are kept) and
+// frees their image blobs.
+func (s *Server) handleDeleteHistory(w http.ResponseWriter, r *http.Request) {
+	ids, err := s.Store.DeleteTerminal(r.Context())
+	if err != nil {
+		log.Printf("api: delete history: %v", err)
+		httpError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	for _, id := range ids {
+		if err := s.Blobs.Delete(id); err != nil {
+			log.Printf("api: delete blob %s: %v", id, err)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"deleted": len(ids)})
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

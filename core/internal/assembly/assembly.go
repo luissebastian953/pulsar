@@ -145,6 +145,30 @@ var lineageSpecs = map[string]lineageSpec{
 // knows to apply the ModelSamplingDiscrete wrap. Unknown lineage → false.
 func Vpred(lineage string) bool { return lineageSpecs[lineage].vpred }
 
+// CheckpointIsVpred infers a checkpoint's prediction type from its filename,
+// so a lineage/checkpoint mismatch can be refused at request time instead of
+// rendering garbage (a v-pred lineage wraps the model in ModelSamplingDiscrete;
+// against an eps checkpoint the sampler collapses to a flat field — docs/tuning.md).
+// Naming-convention only: known is false when the filename carries no marker, so
+// a file we can't classify is never rejected. A "vpred" marker wins over a family
+// marker (e.g. "noobai-xl-vpred").
+func CheckpointIsVpred(name string) (vpred, known bool) {
+	n := strings.ToLower(name)
+	for _, m := range []string{"vpred", "v-pred", "v_pred", "vprediction", "v-prediction"} {
+		if strings.Contains(n, m) {
+			return true, true
+		}
+	}
+	// eps markers: an explicit eps tag, or the Illustrious family, which is
+	// eps in this repo (its v-pred sibling would carry a vpred marker, caught above).
+	for _, m := range []string{"eps", "illustrious"} {
+		if strings.Contains(n, m) {
+			return false, true
+		}
+	}
+	return false, false
+}
+
 // approximate end of each lineage's training data; advisory (docs/tagdb.md)
 var knowledgeCutoff = map[string]time.Time{
 	"illustrious": time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),   // Danbooru2023 dump

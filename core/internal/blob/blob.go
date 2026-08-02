@@ -13,6 +13,10 @@ import (
 type Store interface {
 	Put(id string, data []byte) error
 	Open(id string) (io.ReadCloser, error)
+	// Delete removes id's blob and any role-suffixed output variants
+	// (id-<role>.png, e.g. pose/regional aux images). Missing files are not
+	// an error, so it is safe to call for a job that produced no output.
+	Delete(id string) error
 }
 
 type Dir struct {
@@ -49,4 +53,23 @@ func (d *Dir) Open(id string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	return os.Open(p)
+}
+
+func (d *Dir) Delete(id string) error {
+	p, err := d.path(id)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// aux outputs (pose/regional roles) are stored as id-<role>.png; id is a
+	// validated uuid with no glob metacharacters, so this pattern is safe.
+	matches, _ := filepath.Glob(filepath.Join(d.Root, id+"-*.png"))
+	for _, m := range matches {
+		if err := os.Remove(m); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
