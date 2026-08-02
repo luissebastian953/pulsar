@@ -108,12 +108,24 @@ system doesn't align with a booru-tag autocomplete — but the principle holds.)
   bent over, arched back, crossed legs, arms up, arms behind head, arms behind back,
   crossed arms, hand on hip, outstretched arm, reaching, looking back, head tilt,
   twisted torso, contrapposto, dynamic pose
+- **Head & gaze / arms & hands / legs & feet:** the limb-level detail a full
+  line sketch needs — looking directions, hand states (clenched, open, pointing,
+  spread fingers), leg positions (leg up, standing on one leg, tiptoes, seiza)
+- **Action & airborne:** fighting stance, punching, kicking, midair, falling
+- **Holding & weaponry:** holding X (sword, gun, staff, polearm, bow, shield,
+  umbrella, book, phone…), the object tags themselves (katana, spear, scythe,
+  rifle…), and weapon handling (dual wielding, unsheathing, aiming, sheathed)
 - **Camera:** from above, from below, from side, from behind, dutch angle,
   foreshortening, perspective
 - **Framing:** full body, upper body, cowboy shot, portrait
+- **Backdrop:** simple/white/grey/transparent background, scenery — the /pose
+  background toggle grounds through these
 
 **Verify every one against real `post_count` before trusting it.** The list above is
 a seed, not ground truth — the DB is ground truth. Hand-review the top ~300.
+The full seed lives in `internal/tags/pose.go`; after extending it, re-mark an
+already-seeded DB with `seed-tags -pose-only` (DB-only, no Danbooru traffic) and
+review the `PoseMissing` log line for seeds that didn't land.
 
 Grounding against the pose subset (~200 candidates vs ~50k) is measurably more
 accurate than grounding against everything. That's why `/pose` passes

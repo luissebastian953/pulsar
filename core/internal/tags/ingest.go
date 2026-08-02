@@ -94,6 +94,17 @@ func Ingest(ctx context.Context, pool *pgxpool.Pool, opts IngestOptions) (Ingest
 	return in.stats, nil
 }
 
+// MarkPose re-runs only the pose_relevant classification against the existing
+// DB — no Danbooru traffic. Use after extending poseSeed so an already-seeded
+// vocabulary picks up the new subset without a full re-ingest.
+func MarkPose(ctx context.Context, pool *pgxpool.Pool) (IngestStats, error) {
+	in := ingester{pool: pool}
+	if err := in.pose(ctx); err != nil {
+		return in.stats, fmt.Errorf("classify pose: %w", err)
+	}
+	return in.stats, nil
+}
+
 type ingester struct {
 	pool  *pgxpool.Pool
 	opts  IngestOptions

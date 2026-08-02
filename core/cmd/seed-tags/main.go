@@ -28,6 +28,7 @@ func main() {
 	}
 	floor := flag.Int("min-post-count", defaultFloor, "ingest floor: skip tags the model never learned")
 	baseURL := flag.String("base-url", "https://danbooru.donmai.us", "tag source")
+	poseOnly := flag.Bool("pose-only", false, "re-mark pose_relevant from the current seed list; no Danbooru traffic")
 	flag.Parse()
 
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -47,10 +48,15 @@ func main() {
 		log.Fatalf("ping postgres: %v", err)
 	}
 
-	stats, err := tags.Ingest(ctx, pool, tags.IngestOptions{
-		BaseURL:      *baseURL,
-		MinPostCount: *floor,
-	})
+	var stats tags.IngestStats
+	if *poseOnly {
+		stats, err = tags.MarkPose(ctx, pool)
+	} else {
+		stats, err = tags.Ingest(ctx, pool, tags.IngestOptions{
+			BaseURL:      *baseURL,
+			MinPostCount: *floor,
+		})
+	}
 	if err != nil {
 		log.Fatalf("ingest: %v", err)
 	}
