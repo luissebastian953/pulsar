@@ -1,5 +1,18 @@
 <script setup lang="ts">
-import type { GenerationRequest, TranslatedTag } from '~/types/api'
+import type { GenerationRequest, JobPayload, TranslatedTag } from '~/types/api'
+import type { RecentItem } from '~/components/RecentStrip.vue'
+import {
+  POSE_BG_TAGS, POSE_CAMERA, POSE_FRAMING, POSE_PROPS,
+  paramsToPoseConfig, poseConfigSignature, usePendingPoseConfig, usePosePresets,
+  type PoseConfig, type PosePreset,
+} from '~/composables/usePosePresets'
+
+// Keep this page's composer state alive across navigation (SPA-only, ssr:false,
+// so KeepAlive's client-only nature is a non-issue). Survives route switches;
+// a full reload still resets — use a saved configuration to restore that.
+definePageMeta({ keepalive: true })
+
+const api = useApi()
 
 // /pose grounds against the closed pose vocabulary (docs/tagdb.md#pose-subset)
 // and generates a batch of 4 — pick the one that works.
@@ -7,26 +20,19 @@ const posePrompt = ref('')
 const translate = useTranslate('pose')
 watch(posePrompt, t => translate.onInput(t, 'plain'))
 
-const CAMERA = [
-  { tag: 'from_above', count: 700000 },
-  { tag: 'from_below', count: 500000 },
-  { tag: 'from_side', count: 400000 },
-  { tag: 'from_behind', count: 600000 },
-  { tag: 'dutch_angle', count: 150000 },
-  { tag: 'foreshortening', count: 80000 },
-]
-const FRAMING = [
-  { tag: 'full_body', count: 1200000 },
-  { tag: 'upper_body', count: 1600000 },
-  { tag: 'cowboy_shot', count: 500000 },
-  { tag: 'portrait', count: 800000 },
-]
 const GIRL_N = [0, 5000000, 1500000, 400000, 150000, 80000]
 const BOY_N = [0, 1700000, 350000, 90000, 40000, 20000]
 
 const camera = ref<string[]>([])
 const framing = ref<string[]>(['full_body'])
 const figure = reactive({ girls: 1, boys: 0 })
+// false = clean white sheet (the sketch default): figure-only lineart and far
+// more reliable skeleton detection. true = let the model paint a scene.
+const background = ref(false)
+// props are mutually exclusive with the explicit empty-hands state — action
+// poses invent weapons unless negatived away
+const heldProps = ref<string[]>([])
+const emptyHands = ref(false)
 
 // Template refs auto-unwrap, so this receives the raw array; mutate in place.
 function toggleIn(list: string[], tag: string) {
@@ -35,18 +41,40 @@ function toggleIn(list: string[], tag: string) {
   else list.splice(i, 1)
 }
 
+function toggleProp(key: string) {
+  emptyHands.value = false
+  toggleIn(heldProps.value, key)
+}
+
+function toggleEmptyHands() {
+  emptyHands.value = !emptyHands.value
+  if (emptyHands.value) heldProps.value = []
+}
+
 const figTag = (n: number, word: string) => n === 1 ? `1${word}` : `${n}${word}s`
 
+const mk = (tag: string, count: number): TranslatedTag =>
+  ({ canonical: tag, category: 'general', count, concept: '', stage: 'exact' })
+
 const combined = computed<TranslatedTag[]>(() => {
-  const fig: TranslatedTag[] = []
-  if (figure.girls > 0) fig.push({ canonical: figTag(figure.girls, 'girl'), category: 'general', count: GIRL_N[Math.min(figure.girls, 5)]!, concept: '', stage: 'exact' })
-  if (figure.boys > 0) fig.push({ canonical: figTag(figure.boys, 'boy'), category: 'general', count: BOY_N[Math.min(figure.boys, 5)]!, concept: '', stage: 'exact' })
-  if (figure.girls + figure.boys === 0) fig.push({ canonical: 'no_humans', category: 'general', count: 600000, concept: '', stage: 'exact' })
-  const cam = CAMERA.filter(c => camera.value.includes(c.tag))
-    .map((c): TranslatedTag => ({ canonical: c.tag, category: 'general', count: c.count, concept: '', stage: 'exact' }))
-  const fr = FRAMING.filter(f => framing.value.includes(f.tag))
-    .map((f): TranslatedTag => ({ canonical: f.tag, category: 'general', count: f.count, concept: '', stage: 'exact' }))
-  return [...fig, ...translate.tags.value, ...cam, ...fr].sort((a, b) => b.count - a.count)
+  const out: TranslatedTag[] = []
+  if (figure.girls > 0) out.push(mk(figTag(figure.girls, 'girl'), GIRL_N[Math.min(figure.girls, 5)]!))
+  if (figure.boys > 0) out.push(mk(figTag(figure.boys, 'boy'), BOY_N[Math.min(figure.boys, 5)]!))
+  if (figure.girls + figure.boys === 0) out.push(mk('no_humans', 600000))
+  out.push(...translate.tags.value)
+  out.push(...POSE_CAMERA.filter(c => camera.value.includes(c.tag)).map(c => mk(c.tag, c.count)))
+  out.push(...POSE_FRAMING.filter(f => framing.value.includes(f.tag)).map(f => mk(f.tag, f.count)))
+  for (const p of POSE_PROPS) {
+    if (heldProps.value.includes(p.key)) out.push(...p.tags.map(t => mk(t.tag, t.count)))
+  }
+  if (!background.value) out.push(...POSE_BG_TAGS.map(t => mk(t.tag, t.count)))
+  // solo steers OpenPose onto one detectable figure (.claude/skills/
+  // comfy-workflow) — skipped when the prompt itself asks for multiple views
+  const multiView = out.some(t => ['multiple_views', 'turnaround', 'reference_sheet'].includes(t.canonical))
+  if (figure.girls + figure.boys === 1 && !multiView) out.push(mk('solo', 5000000))
+  const seen = new Set<string>() // a prop pill + typed prose can double a tag
+  return out.filter(t => !seen.has(t.canonical) && !!seen.add(t.canonical))
+    .sort((a, b) => b.count - a.count)
 })
 
 const stat = computed(() => {
@@ -59,30 +87,75 @@ const stat = computed(() => {
     : `${mapped}/${total} mapped`
 })
 
-// ── presets ───────────────────────────────────────────────────────
+// ── quick starts ──────────────────────────────────────────────────
 function presetTurnaround() {
   posePrompt.value = 'turnaround, multiple views, standing, arms at sides'
   camera.value = []
   framing.value = ['full_body']
+  background.value = false
+  heldProps.value = []
+  emptyHands.value = false
 }
 function presetAction() {
   posePrompt.value = 'jumping, twisting to look back, reaching toward the viewer, action pose'
   camera.value = ['from_below', 'foreshortening']
   framing.value = ['full_body']
+  background.value = false
+}
+
+// ── recent: mirrors the Pose history (12 newest done jobs) ────────
+const recentJobs = ref<JobPayload[]>([])
+const poseThumb = (j: JobPayload) => j.images?.lineart ?? j.image_url ?? ''
+const recent = computed<RecentItem[]>(() => recentJobs.value.map(j => ({
+  id: j.id,
+  imageUrl: api.imageUrl(poseThumb(j)),
+  title: `seed ${j.params.seed}`,
+})))
+
+function addRecent(j: JobPayload) {
+  if (!poseThumb(j)) return
+  recentJobs.value = [j, ...recentJobs.value].slice(0, 12)
+}
+
+// Reloaded on every activation (kept-alive page) so the strip stays in sync
+// after history deletions, same as /create.
+async function loadRecent() {
+  try {
+    const res = await api.get<{ jobs: JobPayload[] }>('/history')
+    recentJobs.value = res.jobs
+      .filter(j => j.kind === 'pose' && j.state === 'done' && (j.image_url || j.images))
+      .slice(0, 12)
+  }
+  catch { /* core offline — leave the strip as-is */ }
+}
+onActivated(loadRecent)
+
+function onRecentError(id: string) {
+  recentJobs.value = recentJobs.value.filter(j => j.id !== id)
 }
 
 // ── generation: batch of 4 real jobs ──────────────────────────────
-const cells = [useJob(), useJob(), useJob(), useJob()]
+const cells = [useJob(addRecent), useJob(addRecent), useJob(addRecent), useJob(addRecent)]
 const selected = ref(0)
 const tab = ref<'lineart' | 'skeleton' | 'source'>('source')
 const busy = computed(() => cells.some(c => c.busy.value))
 const anyDone = computed(() => cells.some(c => c.phase.value === 'done'))
 
+// full-figure sketches keep every limb in frame; applied only when full body
+// is the sole framing — mixing framings means the user wants a crop
+const ANTI_CROP = 'cropped legs, cropped torso, cropped arms, feet out of frame, head out of frame, close-up'
+
 function generate() {
   if (busy.value || !combined.value.length) return
+  const tags = combined.value.map(t => t.canonical)
+  const neg: string[] = []
+  if (framing.value.length === 1 && framing.value[0] === 'full_body') neg.push(ANTI_CROP)
+  if (emptyHands.value) neg.push('weapon, holding')
+  if (tags.includes('solo')) neg.push('multiple views, reference sheet, chibi')
   const req: GenerationRequest = {
     kind: 'pose',
-    prompt: combined.value.map(t => t.canonical).join(', '),
+    prompt: tags.join(', '),
+    negative: neg.length ? neg.join(', ') : undefined,
     width: 832,
     height: 1216,
     steps: 24,
@@ -102,12 +175,102 @@ function usePose() {
   openRefFold.value = true
   navigateTo('/create')
 }
+
+// ── configurations (presets) ──────────────────────────────────────
+const { presets: posePresets, save: savePosePreset, remove: removePosePresets } = usePosePresets()
+const drawerOpen = ref(false)
+const saveOpen = ref(false) // composer save
+const detailSaveOpen = ref(false) // history-detail save
+
+function buildPoseConfig(): PoseConfig {
+  return {
+    prompt: posePrompt.value,
+    camera: [...camera.value],
+    framing: [...framing.value],
+    girls: figure.girls,
+    boys: figure.boys,
+    background: background.value,
+    emptyHands: emptyHands.value,
+    props: [...heldProps.value],
+  }
+}
+
+function applyPoseConfig(cfg: PoseConfig) {
+  posePrompt.value = cfg.prompt ?? ''
+  camera.value = [...(cfg.camera ?? [])]
+  framing.value = [...(cfg.framing ?? ['full_body'])]
+  figure.girls = cfg.girls ?? 1
+  figure.boys = cfg.boys ?? 0
+  background.value = cfg.background ?? false
+  emptyHands.value = cfg.emptyHands ?? false
+  heldProps.value = [...(cfg.props ?? [])]
+}
+
+function poseSubtitle(p: PosePreset): string {
+  const c = p.config
+  const fig = [c.girls ? figTag(c.girls, 'girl') : '', c.boys ? figTag(c.boys, 'boy') : '']
+    .filter(Boolean).join(' ')
+  return [
+    fig || 'no humans',
+    c.background ? 'scene' : 'clean bg',
+    c.props.length ? c.props.join(' ') : (c.emptyHands ? 'empty hands' : ''),
+  ].filter(Boolean).join(' · ')
+}
+const drawerPresets = computed(() =>
+  posePresets.value.map(p => ({ id: p.id, name: p.name, subtitle: poseSubtitle(p) })))
+
+function onSaveName(name: string) {
+  savePosePreset(name, buildPoseConfig())
+}
+function onUsePreset(id: string) {
+  const p = posePresets.value.find(x => x.id === id)
+  if (p) applyPoseConfig(p.config)
+}
+function onDeletePresets(ids: string[]) {
+  removePosePresets(ids)
+}
+
+// "Use related config" from the /history pose tab hands a config off here;
+// immediate covers cold navigation, the watch covers keep-alive re-entry.
+const pendingPoseConfig = usePendingPoseConfig()
+watch(pendingPoseConfig, (c) => {
+  if (!c) return
+  pendingPoseConfig.value = null
+  applyPoseConfig(c)
+}, { immediate: true })
+
+// ── recent detail modal ───────────────────────────────────────────
+const detailJob = ref<JobPayload | null>(null)
+const detailOpen = ref(false)
+
+function openRecent(item: RecentItem) {
+  const j = recentJobs.value.find(x => x.id === item.id)
+  if (!j) return
+  detailJob.value = j
+  detailOpen.value = true
+}
+
+const detailSaved = computed(() => {
+  if (!detailJob.value) return false
+  const sig = poseConfigSignature(paramsToPoseConfig(detailJob.value.params))
+  return posePresets.value.some(p => poseConfigSignature(p.config) === sig)
+})
+
+function useDetailConfig() {
+  if (!detailJob.value) return
+  applyPoseConfig(paramsToPoseConfig(detailJob.value.params))
+  detailOpen.value = false
+}
+
+function onDetailSaveName(name: string) {
+  if (detailJob.value) savePosePreset(name, paramsToPoseConfig(detailJob.value.params))
+}
 </script>
 
 <template>
   <main class="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
     <!-- composer rail -->
-    <aside class="order-2 flex flex-none flex-col bg-surface md:order-1 md:h-full md:w-[372px] md:min-h-0 md:border-r md:border-line">
+    <aside class="order-3 flex flex-none flex-col bg-surface md:order-1 md:h-full md:w-[372px] md:min-h-0 md:border-r md:border-line">
       <div class="min-h-0 p-4 md:flex-1 md:overflow-y-auto">
         <SectionLabel class="mb-2.5">
           Pose
@@ -134,7 +297,7 @@ function usePose() {
         </SectionLabel>
         <div class="flex flex-wrap gap-1.5">
           <button
-            v-for="c in CAMERA"
+            v-for="c in POSE_CAMERA"
             :key="c.tag"
             class="focus-ring cursor-pointer rounded-full border px-[13px] py-[5px] font-mono text-[11.5px]"
             :class="camera.includes(c.tag) ? 'pill-on' : 'border-line text-dim hover:border-line-hi'"
@@ -150,7 +313,7 @@ function usePose() {
         </SectionLabel>
         <div class="flex flex-wrap gap-1.5">
           <button
-            v-for="f in FRAMING"
+            v-for="f in POSE_FRAMING"
             :key="f.tag"
             class="focus-ring cursor-pointer rounded-full border px-[13px] py-[5px] font-mono text-[11.5px]"
             :class="framing.includes(f.tag) ? 'pill-on' : 'border-line text-dim hover:border-line-hi'"
@@ -159,6 +322,47 @@ function usePose() {
           >
             {{ f.tag.replaceAll('_', ' ') }}
           </button>
+        </div>
+        <div class="mt-1.5 text-[10.5px] leading-relaxed text-faint">
+          Full body alone also negatives cropped limbs — hands and feet stay in frame.
+        </div>
+
+        <SectionLabel class="mb-2.5 mt-4">
+          Props
+        </SectionLabel>
+        <div class="flex flex-wrap gap-1.5">
+          <button
+            class="focus-ring cursor-pointer rounded-full border px-[13px] py-[5px] font-mono text-[11.5px]"
+            :class="emptyHands ? 'pill-on' : 'border-line text-dim hover:border-line-hi'"
+            :aria-pressed="emptyHands"
+            @click="toggleEmptyHands"
+          >
+            empty hands
+          </button>
+          <button
+            v-for="p in POSE_PROPS"
+            :key="p.key"
+            class="focus-ring cursor-pointer rounded-full border px-[13px] py-[5px] font-mono text-[11.5px]"
+            :class="heldProps.includes(p.key) ? 'pill-on' : 'border-line text-dim hover:border-line-hi'"
+            :aria-pressed="heldProps.includes(p.key)"
+            @click="toggleProp(p.key)"
+          >
+            {{ p.label }}
+          </button>
+        </div>
+        <div class="mt-1.5 text-[10.5px] leading-relaxed text-faint">
+          Empty hands keeps invented weapons out of action poses.
+        </div>
+
+        <SectionLabel class="mb-2.5 mt-4">
+          Background
+        </SectionLabel>
+        <div class="flex items-center">
+          <span class="flex-1 text-[12.5px] text-dim">Show background</span>
+          <ToggleSwitch v-model="background" />
+        </div>
+        <div class="mt-1.5 text-[10.5px] leading-relaxed text-faint">
+          Off keeps the sheet clean — figure-only lines and better skeleton detection.
         </div>
 
         <SectionLabel class="mb-2.5 mt-4">
@@ -187,7 +391,7 @@ function usePose() {
         </div>
 
         <SectionLabel class="mb-2.5 mt-4">
-          Presets
+          Quick starts
         </SectionLabel>
         <div class="flex flex-col gap-2">
           <button
@@ -277,5 +481,78 @@ function usePose() {
         </button>
       </div>
     </section>
+
+    <!-- recent: horizontal on mobile, right rail on desktop -->
+    <RecentStrip
+      class="order-2 flex-none md:hidden"
+      orientation="horizontal"
+      :items="recent"
+      @open="openRecent"
+      @error="onRecentError"
+    >
+      <template #actions>
+        <button
+          class="focus-ring flex size-9 flex-none cursor-pointer items-center justify-center rounded-ctrl border border-line text-dim hover:border-line-hi hover:text-text"
+          aria-label="Save configuration"
+          title="Save current configuration"
+          @click="saveOpen = true"
+        >
+          <Icon name="lucide:bookmark-plus" :size="16" />
+        </button>
+        <button
+          class="focus-ring relative flex size-9 flex-none cursor-pointer items-center justify-center rounded-ctrl border border-line text-dim hover:border-line-hi hover:text-text"
+          aria-label="See configurations"
+          title="See saved configurations"
+          @click="drawerOpen = true"
+        >
+          <Icon name="lucide:folder-open" :size="16" />
+          <span v-if="posePresets.length" class="absolute -right-1 -top-1 min-w-4 rounded-full bg-accent px-1 text-center font-mono text-[9px] leading-4 text-void">{{ posePresets.length }}</span>
+        </button>
+      </template>
+    </RecentStrip>
+    <RecentStrip
+      class="order-3 hidden md:flex"
+      orientation="vertical"
+      :items="recent"
+      @open="openRecent"
+      @error="onRecentError"
+    >
+      <template #actions>
+        <button
+          class="focus-ring flex size-9 flex-none cursor-pointer items-center justify-center rounded-ctrl border border-line text-dim hover:border-line-hi hover:text-text"
+          aria-label="Save configuration"
+          title="Save current configuration"
+          @click="saveOpen = true"
+        >
+          <Icon name="lucide:bookmark-plus" :size="16" />
+        </button>
+        <button
+          class="focus-ring relative flex size-9 flex-none cursor-pointer items-center justify-center rounded-ctrl border border-line text-dim hover:border-line-hi hover:text-text"
+          aria-label="See configurations"
+          title="See saved configurations"
+          @click="drawerOpen = true"
+        >
+          <Icon name="lucide:folder-open" :size="16" />
+          <span v-if="posePresets.length" class="absolute -right-1 -top-1 min-w-4 rounded-full bg-accent px-1 text-center font-mono text-[9px] leading-4 text-void">{{ posePresets.length }}</span>
+        </button>
+      </template>
+    </RecentStrip>
+
+    <HistoryDetail
+      v-model:open="detailOpen"
+      :job="detailJob"
+      :image-url="detailJob ? api.imageUrl(detailJob.image_url) : ''"
+      :saved="detailSaved"
+      @use="useDetailConfig"
+      @save="detailSaveOpen = true"
+    />
+    <PresetSaveDialog v-model:open="saveOpen" @save="onSaveName" />
+    <PresetSaveDialog v-model:open="detailSaveOpen" @save="onDetailSaveName" />
+    <PresetsDrawer
+      v-model:open="drawerOpen"
+      :presets="drawerPresets"
+      @use="onUsePreset"
+      @delete="onDeletePresets"
+    />
   </main>
 </template>

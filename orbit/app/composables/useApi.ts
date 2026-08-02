@@ -14,6 +14,8 @@ export function useApi() {
       $fetch<T>(`${apiBase}${path}`, { headers: headers() }),
     post: <T>(path: string, body: Record<string, unknown>) =>
       $fetch<T>(`${apiBase}${path}`, { method: 'POST', body, headers: headers() }),
+    del: <T>(path: string) =>
+      $fetch<T>(`${apiBase}${path}`, { method: 'DELETE', headers: headers() }),
     upload: <T>(path: string, file: File) => {
       const form = new FormData()
       form.append('image', file)

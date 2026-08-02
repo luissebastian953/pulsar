@@ -148,6 +148,19 @@
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+@keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes overlay-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes drawer-out { from { transform: translateX(0); } to { transform: translateX(100%); } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+
+/* Reka Dialog/AlertDialog enter+exit — Reka holds the node mounted through the
+   closed animation, so both states get a keyframe (docs: Presence). */
+.o-anim[data-state="open"] { animation: overlay-in 0.15s ease; }
+.o-anim[data-state="closed"] { animation: overlay-out 0.15s ease; }
+.d-anim[data-state="open"] { animation: drawer-in 0.2s cubic-bezier(0.32, 0.72, 0, 1); }
+.d-anim[data-state="closed"] { animation: drawer-out 0.18s ease; }
+.pop-anim[data-state="open"] { animation: pop-in 0.14s ease; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }

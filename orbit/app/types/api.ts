@@ -74,6 +74,9 @@ export type GenerationRequest = {
   quality_tags?: boolean
 }
 
+// Marshaled assembly.Spec persisted per job and returned by /history — the
+// core fields are always present; the rest appear when the generation used
+// them. This is the "config stored with the image" the history modal reads.
 export type GenerationParams = {
   prompt: string
   negative: string
@@ -86,6 +89,19 @@ export type GenerationParams = {
   seed: number
   batch_size: number
   lineage: string
+  cfg_rescale?: number
+  checkpoint?: string
+  hires?: boolean
+  hires_scale?: number
+  hires_denoise?: number
+  denoise?: number
+  loras?: { name: string, strength?: number }[]
+  characters?: { prompt: string, reference_id?: string, ref_strength?: number }[]
+  reference_id?: string
+  ref_mode?: 'character' | 'style' | 'character_style'
+  ref_strength?: number
+  ref_fidelity?: number
+  quality_tags?: boolean
 }
 
 export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'blocked'

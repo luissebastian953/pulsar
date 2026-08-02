@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import type { GenerationRequest, JobPayload, UploadResult, TranslatedTag } from '~/types/api'
 import type { RecentItem } from '~/components/RecentStrip.vue'
+import { blobKeys, usePendingConfig, type Preset, type PresetConfig, type PresetImage } from '~/composables/usePresets'
+
+// Keep the whole composer alive across navigation to /pose and back (SPA-only,
+// ssr:false, so KeepAlive's client-only nature is a non-issue). Route switches
+// preserve state; a full reload still resets — that's what saved configs are for.
+definePageMeta({ keepalive: true })
 
 const api = useApi()
 const { public: { modelName } } = useRuntimeConfig()
@@ -13,11 +19,13 @@ const und = ref('')
 const chars = ref<{ text: string, enabled: boolean, refId: string }[]>([])
 const aspect = ref<'portrait' | 'landscape' | 'square'>('portrait')
 const batch = ref(1)
-const steps = ref(24)
-const guidance = ref(5.5)
+// defaults match the NoobAI (v-pred) lineage below — the lineage watcher only
+// fires on change, so the initial values must be that lineage's recommended set
+const steps = ref(28)
+const guidance = ref(5.0)
 const seedText = ref('')
-const sampler = ref('euler_ancestral')
-const scheduler = ref('karras')
+const sampler = ref('euler')
+const scheduler = ref('normal')
 const qualityTags = ref(true)
 const faceDetail = ref(true)
 // size tier = the refine pass: normal (native bucket), large (x1.5), ultra
@@ -32,12 +40,30 @@ const activeCheckpoint = ref('')
 // model lineage: eps (illustrious) vs v-pred (noobai). Settings don't
 // transfer between lineages, so switching resets sampler/guidance/steps to
 // that lineage's recommended values (docs/tuning.md).
-const lineage = ref<'illustrious' | 'noobai'>('illustrious')
+const lineage = ref<'illustrious' | 'noobai'>('noobai')
 const cfgRescale = ref(0.55)
 const LINEAGE_DEFAULTS = {
   illustrious: { steps: 24, guidance: 5.5, sampler: 'euler_ancestral', scheduler: 'karras', rescale: 0 },
   noobai: { steps: 28, guidance: 5.0, sampler: 'euler', scheduler: 'normal', rescale: 0.55 },
 } as const
+
+// Infer a checkpoint's prediction type from its name (mirrors
+// assembly.CheckpointIsVpred in core) so the picker never lands on a
+// lineage/checkpoint pair core would reject. null = unclassifiable (kept as-is).
+function ckptIsVpred(name: string): boolean | null {
+  const n = name.toLowerCase()
+  if (/vpred|v-pred|v_pred|vprediction/.test(n)) return true
+  if (/eps|illustrious/.test(n)) return false
+  return null
+}
+// Keep the current checkpoint if it matches (or is unclassifiable); otherwise
+// switch to the first installed checkpoint whose type matches the lineage.
+function pickCheckpoint(l: 'illustrious' | 'noobai', list: string[], current: string): string {
+  const wantVpred = l === 'noobai'
+  if (current && ckptIsVpred(current) !== !wantVpred) return current
+  return list.find(c => ckptIsVpred(c) === wantVpred) ?? current
+}
+
 watch(lineage, (l) => {
   const d = LINEAGE_DEFAULTS[l]
   steps.value = d.steps
@@ -45,6 +71,7 @@ watch(lineage, (l) => {
   sampler.value = d.sampler
   scheduler.value = d.scheduler
   cfgRescale.value = d.rescale
+  activeCheckpoint.value = pickCheckpoint(l, checkpoints.value, activeCheckpoint.value)
 })
 const loraName = ref('')
 const loraStrength = ref(0.8)
@@ -85,6 +112,7 @@ async function onCharRefPick(e: Event) {
 // image-to-image / inpaint: eager upload on pick so the mask editor can
 // paint on the normalized image (dims always match the bucket)
 const i2iFile = ref<File | null>(null)
+const i2iName = ref('')
 const i2iPreview = ref('')
 const i2iId = ref('')
 const i2iDims = ref<[number, number]>([0, 0])
@@ -101,6 +129,7 @@ async function onI2iPick(e: Event) {
   try {
     const up = await api.upload<UploadResult>('/uploads', file)
     i2iFile.value = file
+    i2iName.value = file.name
     i2iId.value = up.image_id
     i2iDims.value = [up.width, up.height]
     i2iPreview.value = api.imageUrl(`/images/${up.image_id}`)
@@ -125,6 +154,7 @@ async function onMaskSave(file: File) {
 
 function clearI2i() {
   i2iFile.value = null
+  i2iName.value = ''
   i2iPreview.value = ''
   i2iId.value = ''
   maskId.value = ''
@@ -257,19 +287,15 @@ function openRecent(item: RecentItem) {
   job.showResult(item.imageUrl, seed)
 }
 
-onMounted(async () => {
-  try {
-    const lr = await api.get<{ loras: string[] }>('/loras')
-    loras.value = lr.loras
-    const ck = await api.get<{ checkpoints: string[], active: string }>('/checkpoints')
-    checkpoints.value = ck.checkpoints
-    activeCheckpoint.value = ck.active
-  }
-  catch { /* no loras endpoint or none installed */ }
+// Recent mirrors the Create history (12 newest non-pose done images). Reloaded
+// on every activation, not just first mount, so it stays in sync after history
+// deletions — the page is kept-alive, so a mount-only snapshot would keep
+// showing thumbnails whose blobs were deleted elsewhere.
+async function loadRecent() {
   try {
     const res = await api.get<{ jobs: JobPayload[] }>('/history')
     recent.value = res.jobs
-      .filter(j => j.state === 'done' && j.image_url)
+      .filter(j => j.state === 'done' && j.image_url && j.kind !== 'pose')
       .slice(0, 12)
       .map(j => ({
         id: j.id,
@@ -277,8 +303,219 @@ onMounted(async () => {
         title: `${j.params.width} × ${j.params.height} · seed ${j.params.seed}`,
       }))
   }
-  catch { /* core offline — empty strip */ }
+  catch { /* core offline — leave the strip as-is */ }
+}
+
+// drop a thumbnail whose image 404s (e.g. its blob was deleted), so a broken
+// tile never lingers in the strip
+function onRecentError(id: string) {
+  recent.value = recent.value.filter(r => r.id !== id)
+}
+
+onMounted(async () => {
+  try {
+    const lr = await api.get<{ loras: string[] }>('/loras')
+    loras.value = lr.loras
+    const ck = await api.get<{ checkpoints: string[], active: string }>('/checkpoints')
+    checkpoints.value = ck.checkpoints
+    // default lineage is NoobAI (v-pred); pair it with a matching checkpoint so
+    // the first generation doesn't hit core's lineage/checkpoint mismatch guard
+    activeCheckpoint.value = pickCheckpoint(lineage.value, ck.checkpoints, ck.active)
+  }
+  catch { /* no loras endpoint or none installed */ }
 })
+
+// fires on first mount and on every re-activation of the kept-alive page
+onActivated(loadRecent)
+
+// ── configurations (presets) ──────────────────────────────────────
+// The whole left panel is captured to a preset: primitive settings go to
+// localStorage (usePresets), image bytes to IndexedDB (useBlobStore). Core
+// blob ids are ephemeral, so images are re-uploaded on apply for fresh ids.
+const blobs = useBlobStore()
+const { presets, save: savePreset, remove: removePreset } = usePresets()
+const drawerOpen = ref(false)
+const saveOpen = ref(false)
+
+function authHeaders(): Record<string, string> {
+  return api.token.value ? { Authorization: `Bearer ${api.token.value}` } : {}
+}
+
+// Capture one image slot into IndexedDB. `src` is a freshly-picked File or a
+// core image URL (already uploaded / being re-saved). Returns null on empty or
+// any failure — a missing image must never block saving the rest of the config.
+async function captureImage(src: File | string, name: string, w = 0, h = 0): Promise<PresetImage | null> {
+  if (!src) return null
+  try {
+    const blob = typeof src === 'string'
+      ? await (await fetch(src, { headers: authHeaders() })).blob()
+      : src
+    const key = await blobs.put(blob)
+    return { blob: key, name, type: blob.type || 'image/png', width: w, height: h }
+  }
+  catch { return null }
+}
+
+async function buildConfig(): Promise<PresetConfig> {
+  const coreImg = (id: string) => (id ? api.imageUrl(`/images/${id}`) : '')
+  const [charRef, i2i, mask] = await Promise.all([
+    captureImage(charRefId.value ? (charRefPreview.value || coreImg(charRefId.value)) : '', 'reference.png'),
+    captureImage(i2iFile.value || coreImg(i2iId.value), i2iName.value || 'input.png', i2iDims.value[0], i2iDims.value[1]),
+    captureImage(coreImg(maskId.value), 'mask.png'),
+  ])
+  const charRefs = await Promise.all(chars.value.map(c => captureImage(coreImg(c.refId), 'char-ref.png')))
+  return {
+    prompt: prompt.value,
+    mode: mode.value,
+    tagList: [...tagList.value],
+    und: und.value,
+    chars: chars.value.map((c, i) => ({ text: c.text, enabled: c.enabled, ref: charRefs[i] ?? null })),
+    aspect: aspect.value,
+    batch: batch.value,
+    sizeTier: sizeTier.value,
+    lineage: lineage.value,
+    activeCheckpoint: activeCheckpoint.value,
+    steps: steps.value,
+    guidance: guidance.value,
+    cfgRescale: cfgRescale.value,
+    seedText: seedText.value,
+    sampler: sampler.value,
+    scheduler: scheduler.value,
+    qualityTags: qualityTags.value,
+    faceDetail: faceDetail.value,
+    loraName: loraName.value,
+    loraStrength: loraStrength.value,
+    lora2Name: lora2Name.value,
+    lora2Strength: lora2Strength.value,
+    charRef,
+    charRefMode: charRefMode.value,
+    charRefStrength: charRefStrength.value,
+    charRefFidelity: charRefFidelity.value,
+    poseRef: poseRef.value ? { ...poseRef.value } : null,
+    refStrength: refStrength.value,
+    i2i,
+    i2iStrength: i2iStrength.value,
+    mask,
+  }
+}
+
+// Re-upload a stored blob to core, yielding a fresh valid id + preview.
+async function restoreImage(img: PresetImage | null) {
+  if (!img?.blob) return null
+  try {
+    const blob = await blobs.get(img.blob)
+    if (!blob) return null
+    const file = new File([blob], img.name || 'image.png', { type: img.type || blob.type || 'image/png' })
+    const up = await api.upload<UploadResult>('/uploads', file)
+    return { id: up.image_id, preview: api.imageUrl(`/images/${up.image_id}`), width: up.width, height: up.height, file }
+  }
+  catch { return null }
+}
+
+async function applyConfig(cfg: PresetConfig) {
+  // lineage first: its watcher resets sampler/guidance/steps/rescale, so let it
+  // flush (nextTick) before writing the preset's own values, or they're clobbered.
+  lineage.value = cfg.lineage ?? 'illustrious'
+  await nextTick()
+
+  prompt.value = cfg.prompt ?? ''
+  mode.value = cfg.mode ?? 'plain'
+  tagList.value = [...(cfg.tagList ?? [])]
+  und.value = cfg.und ?? ''
+  aspect.value = cfg.aspect ?? 'portrait'
+  batch.value = cfg.batch ?? 1
+  sizeTier.value = cfg.sizeTier ?? 'normal'
+  // empty = no explicit checkpoint; keep the lineage watcher's auto-picked match
+  if (cfg.activeCheckpoint) activeCheckpoint.value = cfg.activeCheckpoint
+  steps.value = cfg.steps ?? steps.value
+  guidance.value = cfg.guidance ?? guidance.value
+  cfgRescale.value = cfg.cfgRescale ?? cfgRescale.value
+  seedText.value = cfg.seedText ?? ''
+  sampler.value = cfg.sampler ?? sampler.value
+  scheduler.value = cfg.scheduler ?? scheduler.value
+  qualityTags.value = cfg.qualityTags ?? true
+  faceDetail.value = cfg.faceDetail ?? true
+  loraName.value = cfg.loraName ?? ''
+  loraStrength.value = cfg.loraStrength ?? 0.8
+  lora2Name.value = cfg.lora2Name ?? ''
+  lora2Strength.value = cfg.lora2Strength ?? 0.65
+  charRefMode.value = cfg.charRefMode ?? 'character_style'
+  charRefStrength.value = cfg.charRefStrength ?? 0.8
+  charRefFidelity.value = cfg.charRefFidelity ?? 0.5
+  poseRef.value = cfg.poseRef ? { ...cfg.poseRef } : null
+  refStrength.value = cfg.refStrength ?? 0.6
+  i2iStrength.value = cfg.i2iStrength ?? 0.6
+
+  const charRefUp = await restoreImage(cfg.charRef)
+  charRefId.value = charRefUp?.id ?? ''
+  charRefPreview.value = charRefUp?.preview ?? ''
+
+  const i2iUp = await restoreImage(cfg.i2i)
+  if (i2iUp) {
+    i2iFile.value = i2iUp.file
+    i2iName.value = cfg.i2i?.name ?? 'input.png'
+    i2iId.value = i2iUp.id
+    i2iPreview.value = i2iUp.preview
+    i2iDims.value = [i2iUp.width, i2iUp.height]
+    maskId.value = (await restoreImage(cfg.mask))?.id ?? ''
+  }
+  else {
+    clearI2i()
+  }
+
+  const restoredChars = await Promise.all((cfg.chars ?? []).map(async c => ({
+    text: c.text,
+    enabled: c.enabled,
+    refId: (await restoreImage(c.ref))?.id ?? '',
+  })))
+  chars.value = restoredChars
+
+  // reveal folds that now hold content
+  folds.und = !!und.value.trim()
+  folds.chars = restoredChars.length > 0
+  folds.ref = !!charRefId.value || !!poseRef.value
+  folds.i2i = !!i2iId.value
+}
+
+async function onSaveName(name: string) {
+  savePreset(name, await buildConfig())
+}
+
+// rows for the shared drawer: it only shows name + subtitle, ids come back
+function presetSubtitle(p: Preset): string {
+  const c = p.config
+  return [
+    c.lineage === 'noobai' ? 'v-pred' : 'eps',
+    c.aspect,
+    c.sizeTier !== 'normal' ? c.sizeTier : '',
+    c.i2i ? 'img2img' : '',
+    c.charRef ? 'reference' : '',
+    c.loraName ? 'lora' : '',
+  ].filter(Boolean).join(' · ')
+}
+const drawerPresets = computed(() =>
+  presets.value.map(p => ({ id: p.id, name: p.name, subtitle: presetSubtitle(p) })))
+
+async function onUsePreset(id: string) {
+  const p = presets.value.find(x => x.id === id)
+  if (p) await applyConfig(p.config)
+}
+function onDeletePresets(ids: string[]) {
+  const set = new Set(ids)
+  const keys = presets.value.filter(p => set.has(p.id)).flatMap(p => blobKeys(p.config))
+  blobs.remove(keys)
+  removePreset(ids)
+}
+
+// "Use related config" from the history modal hands a config off here; apply it
+// then clear the channel. immediate covers a cold navigation into /create; the
+// watch covers the keep-alive case where this page is already mounted.
+const pendingConfig = usePendingConfig()
+watch(pendingConfig, async (c) => {
+  if (!c) return
+  pendingConfig.value = null
+  await applyConfig(c)
+}, { immediate: true })
 
 // ── fold badges ───────────────────────────────────────────────────
 const charBadge = computed(() =>
@@ -411,11 +648,11 @@ const charBadge = computed(() =>
 
         <Fold v-model="folds.i2i" label="Image to image" :badge="maskId ? 'inpaint' : (i2iId ? 'on' : 'off')">
           <div class="grid gap-2.5">
-            <template v-if="i2iFile">
+            <template v-if="i2iId">
               <div class="flex items-center gap-2.5 rounded-ctrl border border-line bg-void p-2">
                 <img :src="i2iPreview" alt="input" class="size-14 flex-none rounded-lg object-cover">
                 <div class="min-w-0 flex-1">
-                  <div class="truncate text-[12px] text-dim">{{ i2iFile.name }}</div>
+                  <div class="truncate text-[12px] text-dim">{{ i2iName }}</div>
                   <div class="font-mono text-[10.5px] text-faint">fitted to the nearest bucket on upload</div>
                 </div>
                 <button class="focus-ring cursor-pointer text-faint hover:text-t-artist" aria-label="remove image" @click="clearI2i">
@@ -633,12 +870,62 @@ const charBadge = computed(() =>
       orientation="horizontal"
       :items="recent"
       @open="openRecent"
-    />
+      @error="onRecentError"
+    >
+      <template #actions>
+        <button
+          class="focus-ring flex size-9 flex-none cursor-pointer items-center justify-center rounded-ctrl border border-line text-dim hover:border-line-hi hover:text-text"
+          aria-label="Save configuration"
+          title="Save current configuration"
+          @click="saveOpen = true"
+        >
+          <Icon name="lucide:bookmark-plus" :size="16" />
+        </button>
+        <button
+          class="focus-ring relative flex size-9 flex-none cursor-pointer items-center justify-center rounded-ctrl border border-line text-dim hover:border-line-hi hover:text-text"
+          aria-label="See configurations"
+          title="See saved configurations"
+          @click="drawerOpen = true"
+        >
+          <Icon name="lucide:folder-open" :size="16" />
+          <span v-if="presets.length" class="absolute -right-1 -top-1 min-w-4 rounded-full bg-accent px-1 text-center font-mono text-[9px] leading-4 text-void">{{ presets.length }}</span>
+        </button>
+      </template>
+    </RecentStrip>
     <RecentStrip
       class="order-3 hidden md:flex"
       orientation="vertical"
       :items="recent"
       @open="openRecent"
+      @error="onRecentError"
+    >
+      <template #actions>
+        <button
+          class="focus-ring flex size-9 flex-none cursor-pointer items-center justify-center rounded-ctrl border border-line text-dim hover:border-line-hi hover:text-text"
+          aria-label="Save configuration"
+          title="Save current configuration"
+          @click="saveOpen = true"
+        >
+          <Icon name="lucide:bookmark-plus" :size="16" />
+        </button>
+        <button
+          class="focus-ring relative flex size-9 flex-none cursor-pointer items-center justify-center rounded-ctrl border border-line text-dim hover:border-line-hi hover:text-text"
+          aria-label="See configurations"
+          title="See saved configurations"
+          @click="drawerOpen = true"
+        >
+          <Icon name="lucide:folder-open" :size="16" />
+          <span v-if="presets.length" class="absolute -right-1 -top-1 min-w-4 rounded-full bg-accent px-1 text-center font-mono text-[9px] leading-4 text-void">{{ presets.length }}</span>
+        </button>
+      </template>
+    </RecentStrip>
+
+    <PresetSaveDialog v-model:open="saveOpen" @save="onSaveName" />
+    <PresetsDrawer
+      v-model:open="drawerOpen"
+      :presets="drawerPresets"
+      @use="onUsePreset"
+      @delete="onDeletePresets"
     />
   </main>
 </template>

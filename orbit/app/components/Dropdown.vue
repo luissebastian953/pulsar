@@ -14,10 +14,18 @@ import {
 
 defineProps<{ options: { value: string, label: string }[], ariaLabel?: string }>()
 const model = defineModel<string>({ required: true })
+
+// Reka treats an empty-string model as "unselected" and blanks the trigger,
+// so a { value: '' } option ("None") never displays — map '' to a sentinel.
+const NONE = '\0'
+const inner = computed({
+  get: () => model.value === '' ? NONE : model.value,
+  set: (v: string) => { model.value = v === NONE ? '' : v },
+})
 </script>
 
 <template>
-  <SelectRoot v-model="model">
+  <SelectRoot v-model="inner">
     <SelectTrigger
       class="focus-ring flex w-full cursor-pointer items-center justify-between gap-2 rounded-ctrl border border-line bg-void px-3 py-2 text-[12.5px] text-text hover:border-line-hi"
       :aria-label="ariaLabel"
@@ -37,7 +45,7 @@ const model = defineModel<string>({ required: true })
           <SelectItem
             v-for="o in options"
             :key="o.value"
-            :value="o.value"
+            :value="o.value === '' ? NONE : o.value"
             class="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-[12.5px] text-text outline-none data-highlighted:bg-line data-[state=checked]:text-accent-soft"
           >
             <SelectItemText>{{ o.label }}</SelectItemText>

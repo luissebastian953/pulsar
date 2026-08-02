@@ -16,11 +16,21 @@ withDefaults(defineProps<{
   failed: false,
   emptyHint: 'Type a description and it becomes Danbooru tags here — the exact ones sent to the model.',
 })
+
+// Collapsible so the strip doesn't push the rest of the composer down as the
+// tag list grows; the choice persists across sessions. The stat stays in the
+// header, so a summary is visible even when collapsed.
+const collapsed = useLocalStorage('pulsar.resolved.collapsed', false)
 </script>
 
 <template>
   <div class="rounded-ctrl border border-line bg-void">
-    <div class="flex items-center gap-2 border-b border-line px-3 py-[9px]">
+    <button
+      class="focus-ring-inset flex w-full cursor-pointer items-center gap-2 px-3 py-[9px]"
+      :class="!collapsed && 'border-b border-line'"
+      :aria-expanded="!collapsed"
+      @click="collapsed = !collapsed"
+    >
       <span
         class="size-1.5 rounded-full bg-accent"
         :style="resolving ? { animation: 'blink .9s ease-in-out infinite' } : undefined"
@@ -28,9 +38,11 @@ withDefaults(defineProps<{
       <span class="section-label">Resolved</span>
       <span class="flex-1" />
       <span class="font-mono text-[10.5px] text-faint">{{ stat }}</span>
-    </div>
+      <Icon :name="collapsed ? 'lucide:plus' : 'lucide:minus'" :size="13" class="text-faint" />
+    </button>
 
-    <div v-if="tags.length" class="flex flex-wrap gap-1.5 px-3 py-[11px]">
+    <div v-show="!collapsed">
+      <div v-if="tags.length" class="flex flex-wrap gap-1.5 px-3 py-[11px]">
       <TagChip
         v-for="(t, i) in tags"
         :key="t.canonical"
@@ -59,6 +71,7 @@ withDefaults(defineProps<{
       <div class="mt-[7px] text-[11.5px] leading-relaxed text-dim">
         No tag for these — the model wouldn't know what to do with them, so
         they're left out rather than guessed at.
+      </div>
       </div>
     </div>
   </div>
