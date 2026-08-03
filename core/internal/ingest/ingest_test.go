@@ -49,7 +49,7 @@ func TestNormalizeRejects(t *testing.T) {
 
 // TestBustCrop: tall images keep only the top portion; squarish pass through.
 func TestBustCrop(t *testing.T) {
-	tall := encodePNG(t, 400, 800)
+	tall := encode(t, 400, 800)
 	out, err := BustCrop(tall)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestBustCrop(t *testing.T) {
 
 	// square canvases crop too — the CALLER gates by framing tags, since
 	// canvas aspect is not a reliable proxy for subject framing
-	square := encodePNG(t, 800, 800)
+	square := encode(t, 800, 800)
 	out, err = BustCrop(square)
 	if err != nil {
 		t.Fatal(err)
@@ -70,13 +70,4 @@ func TestBustCrop(t *testing.T) {
 	if err != nil || cfg.Height != 360 {
 		t.Errorf("square crop height = %d (%v), want 360", cfg.Height, err)
 	}
-}
-
-func encodePNG(t *testing.T, w, h int) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
 }

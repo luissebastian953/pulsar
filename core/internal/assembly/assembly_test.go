@@ -295,7 +295,7 @@ func TestValidation(t *testing.T) {
 }
 
 func TestAllBucketsAccepted(t *testing.T) {
-	for wh := range buckets {
+	for _, wh := range Buckets {
 		if _, err := Build(Request{Prompt: "1girl", Width: wh[0], Height: wh[1]}, opts()); err != nil {
 			t.Errorf("bucket %dx%d rejected: %v", wh[0], wh[1], err)
 		}

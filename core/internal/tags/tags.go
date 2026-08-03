@@ -33,6 +33,19 @@ func Normalize(s string) string {
 	return strings.Join(strings.Fields(strings.ToLower(s)), "_")
 }
 
+// ParseForbidden splits the FORBIDDEN_TAG_UC env value into normalized
+// tag names. The sentinel watch list and the reference-fetch gate both
+// derive from it, so the two can never silently diverge again.
+func ParseForbidden(forbiddenUC string) []string {
+	var out []string
+	for _, t := range strings.Split(forbiddenUC, ",") {
+		if t = Normalize(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // escapeLike makes s literal inside a LIKE pattern — tag names are full of
 // underscores, which LIKE would otherwise treat as wildcards.
 func escapeLike(s string) string {

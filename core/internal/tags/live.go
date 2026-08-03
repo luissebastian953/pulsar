@@ -4,9 +4,6 @@ package tags
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sync"
@@ -21,6 +18,10 @@ type Live struct {
 	http  *http.Client
 	// floor gates write-through and grounding (docs/tagdb.md)
 	floor int
+	// forbidden gates reference fetching at the source: the hardcoded
+	// floor set ∪ FORBIDDEN_TAG_UC. Config can only ADD tags — the floor
+	// never shrinks (fail-closed; CLAUDE.md non-negotiables).
+	forbidden map[string]bool
 
 	// serializes lookups: politeness + de facto single-flight
 	mu   sync.Mutex
@@ -31,13 +32,21 @@ type Live struct {
 
 const missTTL = 10 * time.Minute
 
-func NewLive(pool *pgxpool.Pool, baseURL string, minPostCount int) *Live {
+func NewLive(pool *pgxpool.Pool, baseURL string, minPostCount int, forbiddenUC string) *Live {
+	forbidden := make(map[string]bool, len(forbiddenRefFloor))
+	for t := range forbiddenRefFloor {
+		forbidden[t] = true
+	}
+	for _, t := range ParseForbidden(forbiddenUC) {
+		forbidden[t] = true
+	}
 	return &Live{
-		store: NewStore(pool),
-		base:  baseURL,
-		http:  &http.Client{Timeout: 10 * time.Second},
-		floor: minPostCount,
-		miss:  make(map[string]time.Time),
+		store:     NewStore(pool),
+		base:      baseURL,
+		http:      &http.Client{Timeout: 10 * time.Second},
+		floor:     minPostCount,
+		forbidden: forbidden,
+		miss:      make(map[string]time.Time),
 	}
 }
 
@@ -150,22 +159,5 @@ func (l *Live) fetchTag(ctx context.Context, name string) (*danbooruTag, error) 
 }
 
 func (l *Live) getJSON(ctx context.Context, path string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.base+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "pulsar/1.0 (tag validation)")
-	resp, err := l.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("danbooru %s: %s", path, resp.Status)
-	}
-	return json.Unmarshal(body, v)
+	return getJSON(ctx, l.http, l.base, path, "pulsar/1.0 (tag validation)", 1<<20, v)
 }

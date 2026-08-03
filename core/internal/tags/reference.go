@@ -14,10 +14,11 @@ import (
 	"strings"
 )
 
-// forbiddenRefTags gate fetching at the source, mirroring the training
-// fetcher; the ingest compliance hook remains the real gate downstream
-// (CLAUDE.md non-negotiables).
-var forbiddenRefTags = map[string]bool{
+// forbiddenRefFloor is the hardcoded baseline for the reference-fetch
+// gate. The runtime gate is this set ∪ FORBIDDEN_TAG_UC (built in NewLive)
+// so config can only add tags, never remove these; the ingest compliance
+// hook remains the real gate downstream (CLAUDE.md non-negotiables).
+var forbiddenRefFloor = map[string]bool{
 	"loli": true, "shota": true, "child": true, "toddler": true,
 	"aged_down": true, "baby": true,
 }
@@ -39,7 +40,7 @@ type refPost struct {
 // ≥50% of the sample carries (the consensus design), pass rating/format
 // gates, and depict the character alone (single character tag). Highest
 // score wins.
-func pickConsensusReference(posts []refPost, canonical string) *refPost {
+func pickConsensusReference(posts []refPost, canonical string, forbidden map[string]bool) *refPost {
 	if len(posts) == 0 {
 		return nil
 	}
@@ -74,12 +75,12 @@ func pickConsensusReference(posts []refPost, canonical string) *refPost {
 			continue // variant forms and multi-character posts drift off-design
 		}
 		tags := " " + p.TagAll + " "
-		if hasAny(tags, forbiddenRefTags) {
+		if hasAny(tags, forbidden) {
 			continue
 		}
 		ok := true
 		for _, r := range required {
-			if !strings.Contains(tags, " "+r+" ") {
+			if !hasTag(tags, r) {
 				ok = false
 				break
 			}
@@ -102,22 +103,22 @@ func effectiveScore(p *refPost) int {
 	s := p.Score
 	tags := " " + p.TagGen + " "
 	for _, t := range []string{"standing", "simple_background", "white_background", "grey_background"} {
-		if strings.Contains(tags, " "+t+" ") {
+		if hasTag(tags, t) {
 			s += 40
 		}
 	}
 	for _, t := range []string{"from_below", "from_behind", "from_above", "lying", "chibi", "dutch_angle", "foreshortening"} {
-		if strings.Contains(tags, " "+t+" ") {
+		if hasTag(tags, t) {
 			s -= 60
 		}
 	}
 	// default costume is the identity; alternates only when nothing else
-	if strings.Contains(tags, " alternate_costume ") || strings.Contains(tags, " official_alternate_costume ") {
+	if hasTag(tags, "alternate_costume") || hasTag(tags, "official_alternate_costume") {
 		s -= 40
 	}
 	// face-rich framings condition identity best (full_body imports outfit)
 	for _, t := range []string{"upper_body", "portrait"} {
-		if strings.Contains(tags, " "+t+" ") {
+		if hasTag(tags, t) {
 			s += 30
 		}
 	}
@@ -129,15 +130,21 @@ func effectiveScore(p *refPost) int {
 // (a square official render holds a full body with margins).
 func (p *refPost) FullBody() bool {
 	tags := " " + p.TagGen + " "
-	if strings.Contains(tags, " upper_body ") || strings.Contains(tags, " portrait ") {
+	if hasTag(tags, "upper_body") || hasTag(tags, "portrait") {
 		return false
 	}
-	return strings.Contains(tags, " full_body ") || strings.Contains(tags, " cowboy_shot ")
+	return hasTag(tags, "full_body") || hasTag(tags, "cowboy_shot")
+}
+
+// hasTag reports whether a space-padded tag string carries the exact tag
+// (padding avoids substring false positives: "hair" vs "black_hair").
+func hasTag(spacePadded, tag string) bool {
+	return strings.Contains(spacePadded, " "+tag+" ")
 }
 
 func hasAny(spacePadded string, set map[string]bool) bool {
 	for t := range set {
-		if strings.Contains(spacePadded, " "+t+" ") {
+		if hasTag(spacePadded, t) {
 			return true
 		}
 	}
@@ -155,7 +162,7 @@ func (l *Live) ConsensusReference(ctx context.Context, canonical string, maxByte
 	if err := l.getJSON(ctx, "/posts.json?"+q.Encode(), &posts); err != nil {
 		return nil, 0, false, err
 	}
-	p := pickConsensusReference(posts, canonical)
+	p := pickConsensusReference(posts, canonical, l.forbidden)
 	if p == nil {
 		return nil, 0, false, nil
 	}

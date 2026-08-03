@@ -183,7 +183,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("invalid MIN_POST_COUNT: %v", err)
 		}
-		live = tags.NewLive(pool, danbooruURL, floor)
+		live = tags.NewLive(pool, danbooruURL, floor, forbiddenUC)
 	}
 
 	var translator *nltag.Translator

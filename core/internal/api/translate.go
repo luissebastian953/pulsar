@@ -1,8 +1,6 @@
 package api
 
 import (
-	"encoding/json"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -21,18 +19,11 @@ func (s *Server) handleTranslate(w http.ResponseWriter, r *http.Request) {
 		Text   string `json:"text"`
 		Subset string `json:"subset,omitempty"`
 	}
-	dec := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		httpError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+	if !decodeJSON(w, r, 64<<10, &req) {
 		return
 	}
-	var poseOnly bool
-	switch req.Subset {
-	case "", "all":
-	case "pose":
-		poseOnly = true
-	default:
+	poseOnly, ok := parseSubset(req.Subset)
+	if !ok {
 		httpError(w, http.StatusBadRequest, "subset must be all or pose")
 		return
 	}

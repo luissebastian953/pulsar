@@ -19,15 +19,26 @@ type Node struct {
 
 type Graph map[string]*Node
 
-// Load reads a template and verifies its pinned content hash.
-func Load(dir, name, wantSHA256 string) (Graph, error) {
+// loadPinned reads a file and verifies its pinned content hash; kind is
+// "template" or "fragment" for error text. Both loaders share it so the
+// remediation message never diverges again.
+func loadPinned(dir, name, wantSHA256, kind string) ([]byte, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, name))
 	if err != nil {
 		return nil, err
 	}
 	got := fmt.Sprintf("sha256:%x", sha256.Sum256(raw))
 	if got != wantSHA256 {
-		return nil, fmt.Errorf("template %s hash %s does not match pinned %s — if the edit is intentional, bump the constant in internal/workflow/nodes.go and re-check node IDs", name, got, wantSHA256)
+		return nil, fmt.Errorf("%s %s hash %s does not match pinned %s — if the edit is intentional, bump the constant in internal/workflow/nodes.go and re-check node IDs", kind, name, got, wantSHA256)
+	}
+	return raw, nil
+}
+
+// Load reads a template and verifies its pinned content hash.
+func Load(dir, name, wantSHA256 string) (Graph, error) {
+	raw, err := loadPinned(dir, name, wantSHA256, "template")
+	if err != nil {
+		return nil, err
 	}
 	var g Graph
 	if err := json.Unmarshal(raw, &g); err != nil {
@@ -159,13 +170,9 @@ type Fragment struct {
 
 // LoadFragment reads a patch fragment and verifies its content hash.
 func LoadFragment(dir, name, wantSHA256 string) (*Fragment, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, name))
+	raw, err := loadPinned(dir, name, wantSHA256, "fragment")
 	if err != nil {
 		return nil, err
-	}
-	got := fmt.Sprintf("sha256:%x", sha256.Sum256(raw))
-	if got != wantSHA256 {
-		return nil, fmt.Errorf("fragment %s hash %s does not match pinned %s", name, got, wantSHA256)
 	}
 	var f Fragment
 	if err := json.Unmarshal(raw, &f); err != nil {

@@ -2,9 +2,7 @@ package tags
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -263,37 +261,7 @@ func (in *ingester) pose(ctx context.Context) error {
 }
 
 func (in *ingester) getJSON(ctx context.Context, path string, v any) error {
-	var lastErr error
-	for attempt := 1; attempt <= 4; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, in.opts.BaseURL+path, nil)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("User-Agent", in.opts.UserAgent)
-		resp, err := in.http.Do(req)
-		if err != nil {
-			lastErr = err
-		} else {
-			body, rerr := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-			resp.Body.Close()
-			switch {
-			case rerr != nil:
-				lastErr = rerr
-			case resp.StatusCode == http.StatusOK:
-				return json.Unmarshal(body, v)
-			case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
-				lastErr = fmt.Errorf("GET %s: %s", path, resp.Status)
-			default:
-				return fmt.Errorf("GET %s: %s: %.200s", path, resp.Status, body)
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Duration(attempt) * 2 * time.Second):
-		}
-	}
-	return lastErr
+	return getJSON(ctx, in.http, in.opts.BaseURL, path, in.opts.UserAgent, 32<<20, v)
 }
 
 func (in *ingester) pause(ctx context.Context) error {

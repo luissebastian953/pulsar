@@ -58,7 +58,7 @@ func TestLiveValidateFindsAndWritesThrough(t *testing.T) {
 	fake := &fakeDanbooru{tags: map[string]map[string]any{
 		"yuming_(nte)": fakeTag("yuming_(nte)", 210, 4, false, created),
 	}}
-	live := tags.NewLive(pool, fake.server(t).URL, 50)
+	live := tags.NewLive(pool, fake.server(t).URL, 50, "")
 
 	res, err := live.Validate(context.Background(), "Yuming (NTE)")
 	if err != nil {
@@ -90,7 +90,7 @@ func TestLiveBelowFloorReportedNotStored(t *testing.T) {
 	fake := &fakeDanbooru{tags: map[string]map[string]any{
 		"brand_new_tag": fakeTag("brand_new_tag", 12, 0, false, time.Now()),
 	}}
-	live := tags.NewLive(pool, fake.server(t).URL, 50)
+	live := tags.NewLive(pool, fake.server(t).URL, 50, "")
 
 	res, err := live.Validate(context.Background(), "brand_new_tag")
 	if err != nil {
@@ -116,7 +116,7 @@ func TestLiveResolvesThroughAlias(t *testing.T) {
 		},
 		aliases: map[string]string{"silver_hair": "grey_hair"},
 	}
-	live := tags.NewLive(pool, fake.server(t).URL, 50)
+	live := tags.NewLive(pool, fake.server(t).URL, 50, "")
 
 	res, err := live.Validate(context.Background(), "silver hair")
 	if err != nil {
@@ -137,7 +137,7 @@ func TestLiveMissesAreCachedAndDeprecatedRejected(t *testing.T) {
 	fake := &fakeDanbooru{tags: map[string]map[string]any{
 		"old_junk": fakeTag("old_junk", 5000, 0, true, time.Now()),
 	}}
-	live := tags.NewLive(pool, fake.server(t).URL, 50)
+	live := tags.NewLive(pool, fake.server(t).URL, 50, "")
 
 	if res, err := live.Validate(context.Background(), "old_junk"); err != nil || res != nil {
 		t.Fatalf("deprecated tag must not validate: %+v, %v", res, err)

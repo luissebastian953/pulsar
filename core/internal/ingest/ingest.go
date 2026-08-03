@@ -12,9 +12,9 @@ import (
 	"math"
 
 	"golang.org/x/image/draw"
-)
 
-var buckets = [][2]int{{1024, 1024}, {896, 1152}, {832, 1216}, {1216, 832}, {1344, 768}}
+	"pulsar/core/internal/assembly"
+)
 
 const MaxBytes = 20 << 20
 
@@ -41,9 +41,9 @@ func Normalize(data []byte) (*Result, error) {
 
 	sb := src.Bounds()
 	ar := float64(sb.Dx()) / float64(sb.Dy())
-	best := buckets[0]
+	best := assembly.Buckets[0]
 	bestDiff := math.Inf(1)
-	for _, b := range buckets {
+	for _, b := range assembly.Buckets {
 		if d := math.Abs(math.Log(ar / (float64(b[0]) / float64(b[1])))); d < bestDiff {
 			best, bestDiff = b, d
 		}

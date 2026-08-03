@@ -103,13 +103,29 @@ type Options struct {
 	ForbiddenTagUC string
 }
 
-// SDXL only behaves on-bucket (docs/tuning.md#resolution-buckets).
-var buckets = map[[2]int]bool{
-	{1024, 1024}: true,
-	{896, 1152}:  true,
-	{832, 1216}:  true,
-	{1216, 832}:  true,
-	{1344, 768}:  true,
+// Buckets is the closed set of allowed SDXL resolutions — SDXL only
+// behaves on-bucket (docs/tuning.md#resolution-buckets). Ordered: ingest's
+// nearest-fit iterates it and ties break toward earlier entries.
+var Buckets = [][2]int{{1024, 1024}, {896, 1152}, {832, 1216}, {1216, 832}, {1344, 768}}
+
+// OnBucket reports whether w×h is an allowed generation resolution.
+func OnBucket(w, h int) bool {
+	for _, b := range Buckets {
+		if b[0] == w && b[1] == h {
+			return true
+		}
+	}
+	return false
+}
+
+// bucketList renders Buckets for error text, so the message can never rot
+// out of sync with the real set.
+func bucketList() string {
+	parts := make([]string, len(Buckets))
+	for i, b := range Buckets {
+		parts[i] = fmt.Sprintf("%dx%d", b[0], b[1])
+	}
+	return strings.Join(parts, ", ")
 }
 
 var samplers = map[string]bool{
@@ -221,8 +237,8 @@ func Build(req Request, opts Options) (Spec, error) {
 	if s.Width == 0 && s.Height == 0 {
 		s.Width, s.Height = defaultWidth, defaultHeight
 	}
-	if !buckets[[2]int{s.Width, s.Height}] {
-		return Spec{}, fmt.Errorf("resolution %dx%d is off-bucket; allowed: 1024x1024, 896x1152, 832x1216, 1216x832, 1344x768", s.Width, s.Height)
+	if !OnBucket(s.Width, s.Height) {
+		return Spec{}, fmt.Errorf("resolution %dx%d is off-bucket; allowed: %s", s.Width, s.Height, bucketList())
 	}
 	if s.Steps == 0 {
 		s.Steps = ls.steps

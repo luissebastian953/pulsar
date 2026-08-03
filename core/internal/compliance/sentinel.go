@@ -49,12 +49,7 @@ func NewSentinel(url, forbiddenUC string, threshold, sumGate float64) *Sentinel 
 	}
 	threshold = min(max(threshold, minThreshold), maxThreshold)
 	sumGate = min(max(sumGate, minSumThreshold), maxSumThreshold)
-	var watch []string
-	for _, t := range strings.Split(forbiddenUC, ",") {
-		if t = tags.Normalize(t); t != "" {
-			watch = append(watch, t)
-		}
-	}
+	watch := tags.ParseForbidden(forbiddenUC)
 	return &Sentinel{
 		url:       strings.TrimRight(url, "/"),
 		http:      &http.Client{Timeout: 30 * time.Second},

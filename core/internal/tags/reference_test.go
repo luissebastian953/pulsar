@@ -25,14 +25,14 @@ func TestPickConsensusReference(t *testing.T) {
 		post(5, 70, "g", "gif", 1200, char, "black_hair long_hair"),              // undecodable format
 		post(6, 75, "g", "jpg", 1200, char+" other_(x)", "black_hair long_hair"), // not solo-character
 	}
-	got := pickConsensusReference(posts, char)
+	got := pickConsensusReference(posts, char, forbiddenRefFloor)
 	if got == nil || got.ID != 2 {
 		t.Fatalf("picked %+v, want post 2", got)
 	}
 
 	// forbidden tag at source is rejected regardless of score
 	posts = append(posts, post(7, 99, "g", "jpg", 1200, char, "black_hair long_hair loli"))
-	if got := pickConsensusReference(posts, char); got == nil || got.ID != 2 {
+	if got := pickConsensusReference(posts, char, forbiddenRefFloor); got == nil || got.ID != 2 {
 		t.Fatalf("forbidden-tagged post must not win, picked %+v", got)
 	}
 
@@ -41,15 +41,15 @@ func TestPickConsensusReference(t *testing.T) {
 	posts = append(posts,
 		post(10, 39, "g", "jpg", 1200, char, "black_hair long_hair from_below sitting"),
 		post(11, 18, "g", "jpg", 1200, char, "black_hair long_hair standing simple_background grey_background"))
-	if got := pickConsensusReference(posts, char); got == nil || got.ID != 11 {
+	if got := pickConsensusReference(posts, char, forbiddenRefFloor); got == nil || got.ID != 11 {
 		t.Fatalf("composition bias failed, picked %+v", got)
 	}
 
 	// no eligible candidate → nil, never a forced pick
-	if got := pickConsensusReference([]refPost{post(9, 5, "e", "jpg", 1200, char, "black_hair")}, char); got != nil {
+	if got := pickConsensusReference([]refPost{post(9, 5, "e", "jpg", 1200, char, "black_hair")}, char, forbiddenRefFloor); got != nil {
 		t.Fatalf("expected nil, got %+v", got)
 	}
-	if got := pickConsensusReference(nil, char); got != nil {
+	if got := pickConsensusReference(nil, char, forbiddenRefFloor); got != nil {
 		t.Fatalf("empty input must yield nil")
 	}
 }
@@ -67,5 +67,22 @@ func TestFullBody(t *testing.T) {
 		if got := p.FullBody(); got != want {
 			t.Errorf("FullBody(%q) = %v, want %v", gen, got, want)
 		}
+	}
+}
+
+// TestForbiddenUnionFailClosed pins the gate's fail-closed shape: the
+// hardcoded floor survives any FORBIDDEN_TAG_UC value, env tags are added,
+// and a post carrying an env-added tag is rejected at the source.
+func TestForbiddenUnionFailClosed(t *testing.T) {
+	l := NewLive(nil, "http://danbooru.test", 50, "loli, extra_env_tag")
+	for _, want := range []string{"baby", "loli", "extra_env_tag"} {
+		if !l.forbidden[want] {
+			t.Fatalf("forbidden union missing %q", want)
+		}
+	}
+	char := "c_(x)"
+	posts := []refPost{post(1, 90, "g", "jpg", 1200, char, "black_hair extra_env_tag")}
+	if got := pickConsensusReference(posts, char, l.forbidden); got != nil {
+		t.Fatalf("env-added forbidden tag not gated: %+v", got)
 	}
 }

@@ -133,10 +133,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		// given (docs/tagdb.md#anchors). false = anchors only.
 		AutoReference *bool `json:"auto_reference"`
 	}
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		httpError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+	if !decodeJSON(w, r, 1<<20, &req) {
 		return
 	}
 	if req.Kind == "" {
@@ -162,12 +159,9 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for i, c := range req.Characters {
-			if !imageIDPattern.MatchString(c.ReferenceID) {
-				httpError(w, http.StatusBadRequest, fmt.Sprintf("character %d: invalid reference_id", i+1))
-				return
-			}
-			if _, _, err := s.blobDims(c.ReferenceID); err != nil {
-				httpError(w, http.StatusBadRequest, fmt.Sprintf("character %d: unknown reference_id", i+1))
+			if _, _, ok := s.requireBlob(w, c.ReferenceID,
+				fmt.Sprintf("character %d: invalid reference_id", i+1),
+				fmt.Sprintf("character %d: unknown reference_id", i+1)); !ok {
 				return
 			}
 		}
@@ -177,12 +171,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusBadRequest, "reference does not apply to pose")
 			return
 		}
-		if !imageIDPattern.MatchString(req.RefID) {
-			httpError(w, http.StatusBadRequest, "invalid reference_id")
-			return
-		}
-		if _, _, err := s.blobDims(req.RefID); err != nil {
-			httpError(w, http.StatusBadRequest, "unknown reference_id")
+		if _, _, ok := s.requireBlob(w, req.RefID, "invalid reference_id", "unknown reference_id"); !ok {
 			return
 		}
 		if req.RefStrength == nil {
@@ -195,23 +184,13 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Kind == "img2img" || req.Kind == "inpaint" {
-		if !imageIDPattern.MatchString(req.ImageID) {
-			httpError(w, http.StatusBadRequest, req.Kind+" requires image_id from POST /uploads")
-			return
-		}
-		iw, ih, err := s.blobDims(req.ImageID)
-		if err != nil {
-			httpError(w, http.StatusBadRequest, "unknown image_id")
+		iw, ih, ok := s.requireBlob(w, req.ImageID, req.Kind+" requires image_id from POST /uploads", "unknown image_id")
+		if !ok {
 			return
 		}
 		if req.Kind == "inpaint" {
-			if !imageIDPattern.MatchString(req.MaskID) {
-				httpError(w, http.StatusBadRequest, "inpaint requires mask_id from POST /uploads")
-				return
-			}
-			mw, mh, err := s.blobDims(req.MaskID)
-			if err != nil {
-				httpError(w, http.StatusBadRequest, "unknown mask_id")
+			mw, mh, ok := s.requireBlob(w, req.MaskID, "inpaint requires mask_id from POST /uploads", "unknown mask_id")
+			if !ok {
 				return
 			}
 			if mw != iw || mh != ih {
@@ -650,12 +629,8 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 // GET /tags?q=&subset= — autocomplete over the tag DB; subset=pose grounds
 // against the closed pose vocabulary (docs/tagdb.md#ui-contract).
 func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
-	var poseOnly bool
-	switch r.URL.Query().Get("subset") {
-	case "", "all":
-	case "pose":
-		poseOnly = true
-	default:
+	poseOnly, ok := parseSubset(r.URL.Query().Get("subset"))
+	if !ok {
 		httpError(w, http.StatusBadRequest, "subset must be all or pose")
 		return
 	}
@@ -894,6 +869,46 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// requireBlob validates an uploaded-image id (pattern + existing blob),
+// writing the 400 itself; ok=false means the response is already sent.
+func (s *Server) requireBlob(w http.ResponseWriter, id, invalidMsg, unknownMsg string) (int, int, bool) {
+	if !imageIDPattern.MatchString(id) {
+		httpError(w, http.StatusBadRequest, invalidMsg)
+		return 0, 0, false
+	}
+	iw, ih, err := s.blobDims(id)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, unknownMsg)
+		return 0, 0, false
+	}
+	return iw, ih, true
+}
+
+// parseSubset maps the tag-subset selector shared by /translate and /tags;
+// ok=false means the value is invalid.
+func parseSubset(s string) (poseOnly, ok bool) {
+	switch s {
+	case "", "all":
+		return false, true
+	case "pose":
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+// decodeJSON reads a strict JSON body (unknown fields rejected) up to
+// limit bytes, writing the 400 itself; false = response already sent.
+func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, v any) bool {
+	dec := json.NewDecoder(io.LimitReader(r.Body, limit))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return false
+	}
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
