@@ -10,8 +10,19 @@ import {
 } from 'reka-ui'
 import type { JobPayload } from '~/types/api'
 
-const props = defineProps<{ job: JobPayload | null, imageUrl: string, saved: boolean }>()
-const emit = defineEmits<{ use: [], save: [] }>()
+export interface Props {
+  job: JobPayload | null
+  imageUrl: string
+  saved: boolean
+}
+
+export interface Emits {
+  use: []
+  save: []
+}
+
+const props = defineProps<Props>()
+const emit = defineEmits<Emits>()
 const open = defineModel<boolean>('open', { required: true })
 
 const api = useApi()
@@ -20,10 +31,15 @@ const p = computed(() => props.job?.params)
 // multi-output kinds (pose): the primary is `imageUrl`, extractions come from
 // the payload's images map and get their own tabs
 const role = ref('source')
-watch(() => props.job?.id, () => { role.value = 'source' })
+watch(() => props.job?.id, () => {
+  role.value = 'source'
+})
+
 const roleOptions = computed(() => {
   const extra = Object.keys(props.job?.images ?? {})
+
   if (!extra.length) return []
+
   return [
     { value: 'source', label: 'Source' },
     ...extra.map(r => ({ value: r, label: r[0]!.toUpperCase() + r.slice(1) })),
@@ -31,6 +47,7 @@ const roleOptions = computed(() => {
 })
 const shownUrl = computed(() => {
   const path = props.job?.images?.[role.value as keyof NonNullable<JobPayload['images']>]
+
   return role.value !== 'source' && path ? api.imageUrl(path) : props.imageUrl
 })
 
@@ -40,7 +57,9 @@ const promptTags = computed(() =>
 // labelled config rows, omitting anything the generation didn't use
 const rows = computed(() => {
   const v = p.value
+
   if (!v) return []
+
   const kind = props.job?.kind
   const out: { label: string, value: string }[] = [
     { label: 'Size', value: `${v.width} × ${v.height}${v.hires ? ` · ${(v.hires_scale ?? 1.5) >= 2 ? 'Ultra' : 'Large'} refine` : ''}` },
@@ -48,33 +67,32 @@ const rows = computed(() => {
     { label: 'Steps', value: String(v.steps) },
     { label: 'Guidance', value: String(v.cfg) },
   ]
+
   if (v.cfg_rescale) out.push({ label: 'CFG rescale', value: String(v.cfg_rescale) })
+
   out.push(
     { label: 'Sampler', value: v.sampler },
     { label: 'Schedule', value: v.scheduler },
     { label: 'Lineage', value: v.lineage === 'noobai' ? 'NoobAI · v-pred' : 'Illustrious · eps' },
   )
-  if (v.checkpoint) out.push({ label: 'Base model', value: v.checkpoint.replace(/\.(safetensors|pt)$/, '') })
+
+  if (v.checkpoint) out.push({ label: 'Base model', value: stripModelExt(v.checkpoint) })
+
   if (kind && kind !== 'txt2img') out.push({ label: 'Mode', value: kind })
+
   if (v.denoise != null) out.push({ label: 'Denoise', value: String(v.denoise) })
-  for (const l of v.loras ?? []) out.push({ label: 'LoRA', value: `${l.name.replace(/\.(safetensors|pt)$/, '')} · ${l.strength ?? 0.8}` })
+
+  for (const l of v.loras ?? []) out.push({ label: 'LoRA', value: `${stripModelExt(l.name)} · ${l.strength ?? 0.8}` })
+
   if (v.reference_id) out.push({ label: 'Reference', value: `${v.ref_mode ?? 'character_style'} · str ${v.ref_strength ?? 0.8} · fid ${v.ref_fidelity ?? 0.5}` })
+
   return out
 })
 
-async function download() {
-  try {
-    const blob = await (await fetch(shownUrl.value)).blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `pulsar-${p.value?.seed ?? 'image'}${role.value !== 'source' ? `-${role.value}` : ''}.png`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  }
-  catch { /* network/CORS — the browser tab fallback stays available */ }
+// network/CORS failure is swallowed — the browser tab fallback stays available
+function download() {
+  const suffix = role.value !== 'source' ? `-${role.value}` : ''
+  downloadImage(shownUrl.value, `pulsar-${p.value?.seed ?? 'image'}${suffix}.png`)
 }
 </script>
 
@@ -86,8 +104,13 @@ async function download() {
         class="pop-anim fixed left-1/2 top-1/2 z-50 flex h-[min(760px,92vh)] w-[min(1060px,94vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-canvas border border-line bg-surface shadow-[0_24px_60px_rgba(0,0,0,.6)] focus:outline-none md:flex-row"
         aria-describedby="hist-desc"
       >
-        <DialogTitle class="sr-only">Generation detail</DialogTitle>
-        <DialogDescription id="hist-desc" class="sr-only">
+        <DialogTitle class="sr-only">
+          Generation detail
+        </DialogTitle>
+        <DialogDescription
+          id="hist-desc"
+          class="sr-only"
+        >
           The generated image with a download button, and the full configuration used to produce it.
         </DialogDescription>
 
@@ -100,32 +123,40 @@ async function download() {
             class="max-h-full max-w-full rounded-lg object-contain"
             :class="{ 'bg-white': role !== 'source' }"
           >
-          <Segment
+          <BaseSegment
             v-if="roleOptions.length"
             v-model="role"
             class="absolute bottom-6 left-6 w-auto"
             :options="roleOptions"
           />
-          <button
-            class="focus-ring absolute bottom-6 right-6 flex cursor-pointer items-center gap-1.5 rounded-ctrl border border-line bg-surface/90 px-3 py-2 text-[12.5px] text-text backdrop-blur hover:border-line-hi"
+          <BaseButton
+            class="absolute bottom-6 right-6 bg-surface/90 backdrop-blur"
+            variant="outline"
+            icon="lucide:download"
             @click="download"
           >
-            <Icon name="lucide:download" :size="14" />
             Download
-          </button>
+          </BaseButton>
         </div>
 
         <!-- config -->
         <div class="flex min-h-0 flex-none flex-col border-line md:w-[340px] md:border-l">
           <header class="flex items-center gap-2 border-b border-line px-4 py-3">
             <span class="section-label flex-1">Configuration</span>
-            <DialogClose class="focus-ring cursor-pointer rounded-lg p-1 text-faint hover:text-text" aria-label="Close">
-              <Icon name="lucide:x" :size="15" />
+            <DialogClose as-child>
+              <BaseButton
+                size="small"
+                variant="clear"
+                icon="lucide:x"
+                aria-label="Close"
+              />
             </DialogClose>
           </header>
 
           <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-            <div class="section-label mb-2">Prompt</div>
+            <div class="section-label mb-2">
+              Prompt
+            </div>
             <div class="flex flex-wrap gap-1.5">
               <span
                 v-for="(t, i) in promptTags"
@@ -135,44 +166,58 @@ async function download() {
             </div>
 
             <template v-if="p?.negative?.trim()">
-              <div class="section-label mb-1.5 mt-4">Negative</div>
+              <div class="section-label mb-1.5 mt-4">
+                Negative
+              </div>
               <div class="rounded-ctrl border border-line bg-void px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-faint">
                 {{ p.negative }}
               </div>
             </template>
 
-            <div class="section-label mb-1.5 mt-4">Settings</div>
+            <div class="section-label mb-1.5 mt-4">
+              Settings
+            </div>
             <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
-              <template v-for="r in rows" :key="r.label + r.value">
-                <dt class="font-mono text-[11px] text-faint">{{ r.label }}</dt>
-                <dd class="break-words text-right font-mono text-[11px] text-dim">{{ r.value }}</dd>
+              <template
+                v-for="r in rows"
+                :key="r.label + r.value"
+              >
+                <dt class="font-mono text-[11px] text-faint">
+                  {{ r.label }}
+                </dt>
+                <dd class="break-words text-right font-mono text-[11px] text-dim">
+                  {{ r.value }}
+                </dd>
               </template>
             </dl>
           </div>
 
           <footer class="flex-none border-t border-line p-3">
             <div class="flex gap-2">
-              <button
-                class="focus-ring flex-1 cursor-pointer rounded-ctrl bg-accent px-3 py-2 text-[12.5px] font-medium text-void hover:brightness-110"
+              <BaseButton
+                type="primary"
+                class="flex-1"
                 @click="emit('use')"
               >
                 Use related config
-              </button>
-              <button
+              </BaseButton>
+              <BaseButton
                 v-if="saved"
+                variant="outline"
                 disabled
-                class="focus-ring flex cursor-default items-center gap-1.5 rounded-ctrl border border-line px-3 py-2 text-[12.5px] text-faint"
+                icon="lucide:check"
               >
-                <Icon name="lucide:check" :size="13" />Saved
-              </button>
-              <button
+                Saved
+              </BaseButton>
+              <BaseButton
                 v-else
-                class="focus-ring flex cursor-pointer items-center gap-1.5 rounded-ctrl border border-line px-3 py-2 text-[12.5px] text-dim hover:border-line-hi hover:text-text"
+                variant="outline"
+                icon="lucide:bookmark-plus"
                 title="Save this configuration as a preset"
                 @click="emit('save')"
               >
-                <Icon name="lucide:bookmark-plus" :size="13" />Save
-              </button>
+                Save
+              </BaseButton>
             </div>
           </footer>
         </div>

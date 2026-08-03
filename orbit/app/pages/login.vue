@@ -6,6 +6,7 @@ const confirmed = ref(false)
 
 function enter() {
   if (!confirmed.value) return
+
   localStorage.setItem('pulsar-age-ok', '1')
   navigateTo('/create')
 }
@@ -14,8 +15,14 @@ function enter() {
 <template>
   <div class="flex min-h-dvh flex-col items-center justify-center gap-10 bg-void px-6 font-sans text-text">
     <div class="flex flex-col items-center gap-4">
-      <img src="/pulsar-lockup.svg" alt="pulsar" class="h-12 w-auto md:h-14">
-      <div class="text-[13px] text-dim">self-hosted anime image generation</div>
+      <img
+        src="/pulsar-lockup.svg"
+        alt="pulsar"
+        class="h-12 w-auto md:h-14"
+      >
+      <div class="text-[13px] text-dim">
+        self-hosted anime image generation
+      </div>
     </div>
 
     <div class="w-full max-w-sm rounded-canvas border border-line bg-surface p-6">
@@ -35,14 +42,15 @@ function enter() {
         >
         I confirm that I am an adult and wish to proceed.
       </label>
-      <button
-        class="gen-shadow focus-ring w-full cursor-pointer rounded-ctrl bg-accent py-3 text-sm font-semibold text-white"
-        :class="!confirmed && 'cursor-default opacity-40 shadow-none'"
+      <BaseButton
+        type="primary-gradient"
+        size="large"
+        class="w-full"
         :disabled="!confirmed"
         @click="enter"
       >
         Enter
-      </button>
+      </BaseButton>
     </div>
 
     <div class="font-mono text-2xs text-faint">

@@ -19,9 +19,11 @@ export function useTranslate(subset: 'all' | 'pose' = 'all') {
       resolving.value = false
       return
     }
+
     try {
       const res = await api.post<TranslateResult>('/translate', { text, subset })
       if (mySeq !== seq) return
+
       tags.value = res.tags
       dropped.value = res.dropped
       offline.value = false
@@ -29,9 +31,11 @@ export function useTranslate(subset: 'all' | 'pose' = 'all') {
     }
     catch (e: unknown) {
       if (mySeq !== seq) return
-      const status = (e as { statusCode?: number, status?: number })
+
+      const status = e as { statusCode?: number, status?: number }
       if (status.statusCode === 503 || status.status === 503) offline.value = true
       else failed.value = true
+
       tags.value = []
       dropped.value = []
     }
@@ -51,9 +55,11 @@ export function useTranslate(subset: 'all' | 'pose' = 'all') {
         if (hit) return { canonical: hit.canonical, category: hit.category, count: hit.count, concept: tok, stage: 'exact' }
       }
       catch { /* neutral chip below */ }
+
       return { canonical: norm, category: 'general' as TagCategory, count: 0, concept: tok, stage: 'exact' }
     }))
     if (mySeq !== seq) return
+
     tags.value = results
     dropped.value = []
     resolving.value = false
@@ -71,9 +77,11 @@ export function useTranslate(subset: 'all' | 'pose' = 'all') {
 
   const stat = computed(() => {
     if (resolving.value) return 'resolving…'
+
     const mapped = tags.value.length
     const total = mapped + dropped.value.length
     if (total === 0) return '—'
+
     return dropped.value.length
       ? `${mapped}/${total} mapped · ${dropped.value.length} dropped`
       : `${mapped}/${total} mapped`

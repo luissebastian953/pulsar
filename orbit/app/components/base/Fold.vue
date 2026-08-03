@@ -1,5 +1,10 @@
 <script setup lang="ts">
-defineProps<{ label: string, badge?: string }>()
+export interface Props {
+  label: string
+  badge?: string
+}
+
+defineProps<Props>()
 const open = defineModel<boolean>({ default: false })
 </script>
 
@@ -18,9 +23,15 @@ const open = defineModel<boolean>({ default: false })
       />
       <span class="section-label">{{ label }}</span>
       <span class="flex-1" />
-      <span v-if="badge" class="font-mono text-[11px] text-dim">{{ badge }}</span>
+      <span
+        v-if="badge"
+        class="font-mono text-[11px] text-dim"
+      >{{ badge }}</span>
     </button>
-    <div v-show="open" class="pb-3">
+    <div
+      v-show="open"
+      class="pb-3"
+    >
       <slot />
     </div>
   </div>

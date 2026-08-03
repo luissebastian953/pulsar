@@ -16,7 +16,10 @@ const tabs = [
       class="flex flex-1 flex-col items-center gap-[3px] py-[7px]"
       :class="route.path.startsWith(tab.to) ? 'text-accent-soft' : 'text-faint'"
     >
-      <Icon :name="tab.icon" :size="18" />
+      <Icon
+        :name="tab.icon"
+        :size="18"
+      />
       <span class="text-2xs font-semibold">{{ tab.label }}</span>
     </NuxtLink>
   </nav>

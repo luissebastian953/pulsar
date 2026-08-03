@@ -1,5 +1,9 @@
 <script setup lang="ts">
-defineProps<{ title?: string }>()
+export interface Props {
+  title?: string
+}
+
+defineProps<Props>()
 const model = defineModel<boolean>({ required: true })
 </script>
 

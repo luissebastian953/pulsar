@@ -1,11 +1,15 @@
 <script setup lang="ts">
-const props = withDefaults(defineProps<{
+import { computed } from 'vue'
+
+export interface Props {
   label: string
   min: number
   max: number
   step?: number
   decimals?: number
-}>(), { step: 1, decimals: 0 })
+}
+
+const props = withDefaults(defineProps<Props>(), { step: 1, decimals: 0 })
 
 const model = defineModel<number>({ required: true })
 const display = computed(() => model.value.toFixed(props.decimals))

@@ -1,5 +1,9 @@
 <script setup lang="ts">
-defineProps<{ options: { value: string | number, label: string }[] }>()
+export interface Props {
+  options: { value: string | number, label: string }[]
+}
+
+defineProps<Props>()
 const model = defineModel<string | number>({ required: true })
 </script>
 

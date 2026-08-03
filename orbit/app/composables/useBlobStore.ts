@@ -10,6 +10,7 @@ let dbPromise: Promise<IDBDatabase> | null = null
 
 function db(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise
+
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1)
     req.onupgradeneeded = () => {
@@ -23,8 +24,10 @@ function db(): Promise<IDBDatabase> {
   return dbPromise
 }
 
-function tx(mode: IDBTransactionMode): Promise<IDBObjectStore> {
-  return db().then(d => d.transaction(STORE, mode).objectStore(STORE))
+async function tx(mode: IDBTransactionMode): Promise<IDBObjectStore> {
+  const d = await db()
+
+  return d.transaction(STORE, mode).objectStore(STORE)
 }
 
 function wrap<T>(req: IDBRequest<T>): Promise<T> {
@@ -43,11 +46,13 @@ export function useBlobStore() {
 
   async function get(key: string): Promise<Blob | undefined> {
     if (!key) return undefined
+
     return wrap((await tx('readonly')).get(key) as IDBRequest<Blob | undefined>)
   }
 
   async function remove(keys: string[]): Promise<void> {
     if (!keys.length) return
+
     const store = await tx('readwrite')
     await Promise.all(keys.filter(Boolean).map(k => wrap(store.delete(k))))
   }

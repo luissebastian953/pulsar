@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { TagLookupResult, TagSuggestion } from '~/types/api'
 import {
   ComboboxAnchor,
   ComboboxContent,
@@ -10,102 +9,17 @@ import {
   ComboboxViewport,
 } from 'reka-ui'
 
-// Reka combobox over core's /tags (docs/frontend.md §1)
-const props = withDefaults(defineProps<{ subset?: 'all' | 'pose' }>(), { subset: 'all' })
+// Reka combobox over core's /tags (docs/frontend.md §1); the search/commit
+// rules live in useTagAutocomplete.
+export interface Props {
+  subset?: 'all' | 'pose'
+}
+
+const props = withDefaults(defineProps<Props>(), { subset: 'all' })
 const model = defineModel<string[]>({ required: true })
 
-const api = useApi()
-const query = ref('')
-const suggestions = ref<TagSuggestion[]>([])
-const open = ref(false)
-
-const search = useDebounceFn(async (q: string) => {
-  if (!q.trim()) {
-    suggestions.value = []
-    return
-  }
-  try {
-    const res = await api.get<{ tags: TagSuggestion[] }>(
-      `/tags?q=${encodeURIComponent(q)}&subset=${props.subset}`,
-    )
-    let tags = res.tags.filter(s => !model.value.includes(s.canonical))
-    // DB miss → live Danbooru lookup (art subset only)
-    if (!tags.length && props.subset === 'all' && q.trim().length >= 3) {
-      const live = await api.get<TagLookupResult>(`/tags/lookup?name=${encodeURIComponent(q)}`)
-      if (live.found && !model.value.includes(live.tag.canonical)) tags = [live.tag]
-    }
-    suggestions.value = tags
-    open.value = suggestions.value.length > 0
-  }
-  catch {
-    suggestions.value = []
-  }
-}, 150)
-
-// tag-name form: lowercase, trimmed, whitespace runs → single underscore
-// (matches core's tags.Normalize)
-function normalize(s: string) {
-  return s.trim().toLowerCase().split(/\s+/).join('_')
-}
-
-// commas commit tags — typed or pasted. Everything before the last comma
-// becomes chips (in ONE assignment, so a big paste doesn't lose segments to
-// reka's controlled-input reactivity); the trailing fragment stays in the
-// box for autocomplete.
-watch(query, (q) => {
-  if (q.includes(',')) {
-    const parts = q.split(',')
-    const tail = parts.pop() ?? ''
-    commitMany(parts)
-    query.value = tail
-    return
-  }
-  search(q)
-})
-
-function commitMany(raws: string[]) {
-  const existing = new Set(model.value)
-  const add: string[] = []
-  for (const raw of raws) {
-    const name = normalize(raw)
-    if (name && !existing.has(name)) {
-      existing.add(name)
-      add.push(name)
-    }
-  }
-  if (add.length) model.value = [...model.value, ...add]
-}
-
-function commit(raw: string) {
-  commitMany([raw])
-}
-
-function add(canonical: string) {
-  if (canonical && !model.value.includes(canonical)) {
-    model.value = [...model.value, canonical]
-  }
-  query.value = ''
-  suggestions.value = []
-  open.value = false
-}
-
-function remove(canonical: string) {
-  model.value = model.value.filter(t => t !== canonical)
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Backspace' && !query.value && model.value.length) {
-    model.value = model.value.slice(0, -1)
-  }
-  // Enter commits the raw token when no suggestion is highlighted, so a
-  // free-typed tag doesn't require an autocomplete hit
-  if (e.key === 'Enter' && query.value.trim() && !document.querySelector('[role="option"][data-highlighted]')) {
-    e.preventDefault()
-    commit(query.value)
-    query.value = ''
-    open.value = false
-  }
-}
+const { query, suggestions, open, add, remove, onKeydown }
+  = useTagAutocomplete(model, () => props.subset)
 </script>
 
 <template>
@@ -118,7 +32,7 @@ function onKeydown(e: KeyboardEvent) {
     <ComboboxAnchor
       class="flex min-h-[92px] w-full flex-wrap content-start items-center gap-1.5 rounded-ctrl border border-line bg-void p-2.5 focus-within:border-line-hi"
     >
-      <TagChip
+      <BaseTagChip
         v-for="t in model"
         :key="t"
         :name="t"
@@ -167,7 +81,7 @@ function onKeydown(e: KeyboardEvent) {
               class="rounded-full border border-line-hi px-1.5 text-2xs text-dim"
               title="validated live against Danbooru"
             >live</span>
-            <span class="font-mono text-2xs text-faint">{{ s.count >= 1e6 ? `${(s.count / 1e6).toFixed(1)}M` : s.count >= 1e3 ? `${Math.round(s.count / 1e3)}k` : s.count }}</span>
+            <span class="font-mono text-2xs text-faint">{{ formatCount(s.count) || s.count }}</span>
           </ComboboxItem>
         </ComboboxViewport>
       </ComboboxContent>

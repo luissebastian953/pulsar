@@ -4,6 +4,6 @@
     <div class="flex min-h-0 flex-1 flex-col">
       <slot />
     </div>
-    <TabBar class="md:hidden" />
+    <BaseTabBar class="md:hidden" />
   </div>
 </template>

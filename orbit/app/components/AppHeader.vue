@@ -11,7 +11,11 @@ const nav = [
 
 <template>
   <header class="flex h-[52px] flex-none items-center gap-4 border-b border-line bg-surface px-4 md:gap-7">
-    <NuxtLink to="/create" class="flex items-center text-white" aria-label="pulsar home">
+    <NuxtLink
+      to="/create"
+      class="flex items-center text-white"
+      aria-label="pulsar home"
+    >
       <PulsarMark :size="26" />
     </NuxtLink>
 
@@ -23,7 +27,11 @@ const nav = [
         class="focus-ring-inset flex items-center gap-[7px] border-y-2 border-transparent px-3 text-sm"
         :class="route.path.startsWith(item.to) ? 'border-b-line-hi text-text' : 'text-dim hover:text-text'"
       >
-        <Icon :name="item.icon" :size="15" class="flex-none" />
+        <Icon
+          :name="item.icon"
+          :size="15"
+          class="flex-none"
+        />
         {{ item.label }}
       </NuxtLink>
     </nav>
@@ -31,12 +39,22 @@ const nav = [
     <div class="flex-1" />
 
     <div class="flex items-center gap-2">
-      <button class="focus-ring flex cursor-pointer items-center gap-[7px] rounded-ctrl border border-line px-2.5 py-[5px] text-xs text-text hover:border-line-hi">
+      <BaseButton
+        size="small"
+        variant="outline"
+        icon="lucide:chevron-down"
+        icon-right
+      >
         {{ modelName }}
-        <Icon name="lucide:chevron-down" :size="13" class="text-faint" />
-      </button>
-      <div class="flex items-center gap-1.5 rounded-ctrl border border-line px-2.5 py-[5px] text-xs text-dim" title="Credits">
-        <Icon name="lucide:zap" :size="13" />
+      </BaseButton>
+      <div
+        class="flex items-center gap-1.5 rounded-ctrl border border-line px-2.5 py-[5px] text-xs text-dim"
+        title="Credits"
+      >
+        <Icon
+          name="lucide:zap"
+          :size="13"
+        />
         1,240
       </div>
     </div>

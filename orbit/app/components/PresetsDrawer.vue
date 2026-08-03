@@ -15,6 +15,7 @@ import {
   DialogRoot,
   DialogTitle,
 } from 'reka-ui'
+
 // Presentation-only rows: both /create and /pose feed their own preset shapes
 // through this one drawer, so it never knows a config's fields — the caller
 // renders the subtitle and resolves the emitted id back to its preset.
@@ -24,8 +25,17 @@ export interface DrawerPreset {
   subtitle: string
 }
 
-defineProps<{ presets: DrawerPreset[] }>()
-const emit = defineEmits<{ use: [id: string], delete: [ids: string[]] }>()
+export interface Props {
+  presets: DrawerPreset[]
+}
+
+export interface Emits {
+  use: [id: string]
+  delete: [ids: string[]]
+}
+
+defineProps<Props>()
+const emit = defineEmits<Emits>()
 const open = defineModel<boolean>('open', { required: true })
 
 const selecting = ref(false)
@@ -37,15 +47,8 @@ watch([open, selecting], () => {
   if (!open.value || !selecting.value) selected.value = new Set()
 })
 
-function toggle(id: string) {
-  const next = new Set(selected.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  selected.value = next
-}
-
 function rowClick(p: DrawerPreset) {
-  if (selecting.value) toggle(p.id)
+  if (selecting.value) selected.value = toggledSet(selected.value, p.id)
   else pending.value = p
 }
 
@@ -54,6 +57,7 @@ function confirmUse() {
   // and if it runs first the emit would be skipped (the "doesn't autofill" bug)
   const p = pending.value
   pending.value = null
+
   if (p) {
     emit('use', p.id)
     open.value = false
@@ -62,6 +66,7 @@ function confirmUse() {
 
 function deleteSelected() {
   if (selected.value.size) emit('delete', [...selected.value])
+
   selecting.value = false
 }
 </script>
@@ -78,26 +83,37 @@ function deleteSelected() {
           <DialogTitle class="section-label flex-1">
             Configurations
           </DialogTitle>
-          <DialogDescription id="presets-desc" class="sr-only">
+          <DialogDescription
+            id="presets-desc"
+            class="sr-only"
+          >
             Saved composer configurations. Click one to apply it, or use select mode to delete.
           </DialogDescription>
-          <button
+          <BaseButton
             v-if="presets.length"
-            class="focus-ring cursor-pointer rounded-lg p-1 text-faint hover:text-text"
-            :class="selecting && 'text-accent-soft'"
+            size="small"
+            variant="clear"
+            :type="selecting ? 'primary' : 'default'"
+            :icon="selecting ? 'lucide:x' : 'lucide:list-checks'"
             :aria-label="selecting ? 'Exit select mode' : 'Select configurations'"
             :title="selecting ? 'Exit select mode' : 'Select'"
             @click="selecting = !selecting"
-          >
-            <Icon :name="selecting ? 'lucide:x' : 'lucide:list-checks'" :size="15" />
-          </button>
-          <DialogClose class="focus-ring cursor-pointer rounded-lg p-1 text-faint hover:text-text" aria-label="Close">
-            <Icon name="lucide:panel-right-close" :size="15" />
+          />
+          <DialogClose as-child>
+            <BaseButton
+              size="small"
+              variant="clear"
+              icon="lucide:panel-right-close"
+              aria-label="Close"
+            />
           </DialogClose>
         </header>
 
         <div class="min-h-0 flex-1 overflow-y-auto p-2">
-          <div v-if="!presets.length" class="px-3 py-10 text-center text-[12.5px] leading-relaxed text-faint">
+          <div
+            v-if="!presets.length"
+            class="px-3 py-10 text-center text-[12.5px] leading-relaxed text-faint"
+          >
             No saved configurations yet.<br>Use <span class="text-dim">Save config</span> to store the current setup.
           </div>
           <button
@@ -112,11 +128,18 @@ function deleteSelected() {
               class="flex size-[18px] flex-none items-center justify-center rounded-[5px] border"
               :class="selected.has(p.id) ? 'border-accent bg-accent text-void' : 'border-line-hi text-transparent'"
             >
-              <Icon name="lucide:check" :size="12" />
+              <Icon
+                name="lucide:check"
+                :size="12"
+              />
             </span>
             <div class="min-w-0 flex-1">
-              <div class="truncate text-[13px] text-text">{{ p.name }}</div>
-              <div class="truncate font-mono text-[10.5px] text-faint">{{ p.subtitle }}</div>
+              <div class="truncate text-[13px] text-text">
+                {{ p.name }}
+              </div>
+              <div class="truncate font-mono text-[10.5px] text-faint">
+                {{ p.subtitle }}
+              </div>
             </div>
             <Icon
               v-if="!selecting"
@@ -127,22 +150,30 @@ function deleteSelected() {
           </button>
         </div>
 
-        <footer v-if="selecting" class="flex-none border-t border-line p-3">
-          <button
-            class="focus-ring flex w-full cursor-pointer items-center justify-center gap-2 rounded-ctrl border border-line py-2 text-[12.5px] text-warn transition-colors hover:border-warn/60 hover:bg-warn/10 disabled:cursor-not-allowed disabled:opacity-40"
+        <footer
+          v-if="selecting"
+          class="flex-none border-t border-line p-3"
+        >
+          <BaseButton
+            class="w-full"
+            variant="outline"
+            type="warn"
+            icon="lucide:trash-2"
             :disabled="!selected.size"
             @click="deleteSelected"
           >
-            <Icon name="lucide:trash-2" :size="14" />
             Delete{{ selected.size ? ` (${selected.size})` : '' }}
-          </button>
+          </BaseButton>
         </footer>
       </DialogContent>
     </DialogPortal>
   </DialogRoot>
 
   <!-- Use-configuration confirm -->
-  <AlertDialogRoot :open="!!pending" @update:open="v => { if (!v) pending = null }">
+  <AlertDialogRoot
+    :open="!!pending"
+    @update:open="v => { if (!v) pending = null }"
+  >
     <AlertDialogPortal>
       <AlertDialogOverlay class="o-anim fixed inset-0 z-[60] bg-void/70" />
       <AlertDialogContent class="pop-anim fixed left-1/2 top-1/2 z-[61] w-[300px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 rounded-canvas border border-line bg-raised p-5 shadow-[0_20px_50px_rgba(0,0,0,.6)] focus:outline-none">
@@ -153,12 +184,17 @@ function deleteSelected() {
           Switches the composer to <span class="text-text">{{ pending?.name }}</span>. Your current setup isn't saved unless you saved it first.
         </AlertDialogDescription>
         <div class="mt-4 flex justify-end gap-2">
-          <AlertDialogCancel class="focus-ring cursor-pointer rounded-ctrl border border-line px-3.5 py-1.5 text-[12.5px] text-dim hover:border-line-hi hover:text-text">
-            No
+          <AlertDialogCancel as-child>
+            <BaseButton variant="outline">
+              No
+            </BaseButton>
           </AlertDialogCancel>
-          <button class="focus-ring cursor-pointer rounded-ctrl bg-accent px-3.5 py-1.5 text-[12.5px] font-medium text-void hover:brightness-110" @click="confirmUse">
+          <BaseButton
+            type="primary"
+            @click="confirmUse"
+          >
             Yes, use it
-          </button>
+          </BaseButton>
         </div>
       </AlertDialogContent>
     </AlertDialogPortal>

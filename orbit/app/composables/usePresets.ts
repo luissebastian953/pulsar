@@ -65,6 +65,7 @@ export function blobKeys(c: PresetConfig): string[] {
   for (const img of [c.charRef, c.i2i, c.mask, ...c.chars.map(ch => ch.ref)]) {
     if (img?.blob) keys.push(img.blob)
   }
+
   return keys
 }
 

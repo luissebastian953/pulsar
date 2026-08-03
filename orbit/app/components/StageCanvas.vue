@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import type { JobTracker } from '~/composables/useGeneration'
 
-const props = withDefaults(defineProps<{
+export interface Props {
   job: JobTracker
   width: number
   height: number
   // viewport: desktop stage, sized against the viewport height.
   // block: mobile, fills the parent width.
   fit?: 'viewport' | 'block'
-}>(), { fit: 'viewport' })
+}
+
+const props = withDefaults(defineProps<Props>(), { fit: 'viewport' })
 
 const dims = computed(() => `${props.width} × ${props.height}`)
 const ratio = computed(() => props.width / props.height)
@@ -26,13 +28,16 @@ const statusText = computed(() => {
     const ahead = Math.max(0, j.queuePos.value - 1)
     return ahead > 0 ? `Queued · ${ahead} ahead` : 'Queued'
   }
+
   return `Generating · ${j.step.value}/${j.total.value}`
 })
 
 const barPct = computed(() => {
   const j = props.job
   if (j.phase.value === 'queued') return '3%'
+
   if (!j.total.value) return '0%'
+
   return `${Math.round((j.step.value / j.total.value) * 100)}%`
 })
 </script>
@@ -43,11 +48,19 @@ const barPct = computed(() => {
     :style="containerStyle"
   >
     <!-- empty -->
-    <div v-if="job.phase.value === 'idle'" class="p-6 text-center">
+    <div
+      v-if="job.phase.value === 'idle'"
+      class="p-6 text-center"
+    >
       <div class="mb-3 flex justify-center text-line-hi">
-        <Icon name="lucide:image" :size="28" />
+        <Icon
+          name="lucide:image"
+          :size="28"
+        />
       </div>
-      <div class="mb-2 font-mono text-[13px] text-faint">{{ dims }}</div>
+      <div class="mb-2 font-mono text-[13px] text-faint">
+        {{ dims }}
+      </div>
       <div class="text-[13px] leading-relaxed text-dim">
         Nothing here yet. Describe something and hit Generate.
       </div>
@@ -62,11 +75,19 @@ const barPct = computed(() => {
     >
 
     <!-- blocked: never delivered (docs/compliance.md) -->
-    <div v-else-if="job.phase.value === 'blocked'" class="max-w-xs p-6 text-center">
+    <div
+      v-else-if="job.phase.value === 'blocked'"
+      class="max-w-xs p-6 text-center"
+    >
       <div class="mb-3 flex justify-center text-warn">
-        <Icon name="lucide:shield-alert" :size="28" />
+        <Icon
+          name="lucide:shield-alert"
+          :size="28"
+        />
       </div>
-      <div class="mb-2 text-[13px] font-semibold text-warn">Blocked</div>
+      <div class="mb-2 text-[13px] font-semibold text-warn">
+        Blocked
+      </div>
       <div class="text-[13px] leading-relaxed text-dim">
         This result failed the content check and was never delivered.
         Adjust the prompt and try again.
@@ -74,12 +95,22 @@ const barPct = computed(() => {
     </div>
 
     <!-- failed -->
-    <div v-else-if="job.phase.value === 'failed'" class="max-w-xs p-6 text-center">
+    <div
+      v-else-if="job.phase.value === 'failed'"
+      class="max-w-xs p-6 text-center"
+    >
       <div class="mb-3 flex justify-center text-t-artist">
-        <Icon name="lucide:circle-alert" :size="28" />
+        <Icon
+          name="lucide:circle-alert"
+          :size="28"
+        />
       </div>
-      <div class="mb-2 text-[13px] font-semibold text-t-artist">Generation failed</div>
-      <div class="font-mono text-xs leading-relaxed text-dim">{{ job.error.value }}</div>
+      <div class="mb-2 text-[13px] font-semibold text-t-artist">
+        Generation failed
+      </div>
+      <div class="font-mono text-xs leading-relaxed text-dim">
+        {{ job.error.value }}
+      </div>
     </div>
 
     <!-- generating -->
@@ -91,7 +122,9 @@ const barPct = computed(() => {
         />
       </div>
       <div class="absolute inset-x-0 bottom-0 border-t border-line bg-void/90 px-3 py-[9px]">
-        <div class="mb-[7px] font-mono text-[11.5px] text-dim">{{ statusText }}</div>
+        <div class="mb-[7px] font-mono text-[11.5px] text-dim">
+          {{ statusText }}
+        </div>
         <div class="h-0.5 overflow-hidden rounded-px bg-line">
           <div
             class="h-full bg-accent transition-[width] duration-100 ease-linear"

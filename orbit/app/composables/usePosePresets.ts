@@ -129,6 +129,7 @@ export function paramsToPoseConfig(p: GenerationParams): PoseConfig {
   const take = (tag: string): boolean => {
     const had = tags.includes(tag)
     if (had) tags = tags.filter(t => t !== tag)
+
     return had
   }
 
@@ -137,10 +138,13 @@ export function paramsToPoseConfig(p: GenerationParams): PoseConfig {
   for (const t of [...tags]) {
     const m = t.match(/^([1-5])(girl|boy)s?$/)
     if (!m) continue
+
     if (m[2] === 'girl') girls = Number(m[1])
     else boys = Number(m[1])
+
     take(t)
   }
+
   take('no_humans')
 
   const camera = POSE_CAMERA.filter(c => take(c.tag)).map(c => c.tag)

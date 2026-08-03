@@ -8,11 +8,15 @@ import {
   DialogTitle,
 } from 'reka-ui'
 
-const emit = defineEmits<{ save: [name: string] }>()
+export interface Emits {
+  save: [name: string]
+}
+
+const emit = defineEmits<Emits>()
 const open = defineModel<boolean>('open', { required: true })
 
 const name = ref('')
-const input = ref<HTMLInputElement | null>(null)
+const input = useTemplateRef<{ focus: () => void }>('input')
 
 watch(open, (v) => {
   if (v) {
@@ -23,7 +27,9 @@ watch(open, (v) => {
 
 function submit() {
   const n = name.value.trim()
+
   if (!n) return
+
   emit('save', n)
   open.value = false
 }
@@ -43,27 +49,27 @@ function submit() {
         <DialogDescription class="mt-1.5 text-[12.5px] leading-relaxed text-dim">
           Stores the entire composer — prompt, characters, references, images, and every setting.
         </DialogDescription>
-        <input
+        <BaseInput
           ref="input"
           v-model="name"
+          class="mt-3"
           placeholder="e.g. Firefly swimsuit"
           maxlength="60"
-          class="mt-3 w-full rounded-ctrl border border-line bg-void px-3 py-2 text-[13px] text-text outline-none placeholder:text-faint focus:border-line-hi"
-        >
+        />
         <div class="mt-4 flex justify-end gap-2">
-          <button
-            class="focus-ring cursor-pointer rounded-ctrl border border-line px-3.5 py-1.5 text-[12.5px] text-dim hover:border-line-hi hover:text-text"
+          <BaseButton
+            variant="outline"
             @click="open = false"
           >
             Cancel
-          </button>
-          <button
-            class="focus-ring cursor-pointer rounded-ctrl bg-accent px-3.5 py-1.5 text-[12.5px] font-medium text-void hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          </BaseButton>
+          <BaseButton
+            type="primary"
             :disabled="!name.trim()"
             @click="submit"
           >
             Save
-          </button>
+          </BaseButton>
         </div>
       </DialogContent>
     </DialogPortal>

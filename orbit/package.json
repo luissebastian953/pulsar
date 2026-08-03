@@ -8,6 +8,8 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "nuxt typecheck",
     "postinstall": "nuxt prepare"
   },
@@ -25,10 +27,14 @@
     "@nuxt/eslint": "^1.4.0",
     "@nuxt/icon": "^1.13.0",
     "@tailwindcss/postcss": "^4.3.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.4.11",
     "@vueuse/nuxt": "^13.0.0",
     "eslint": "^9.0.0",
+    "happy-dom": "^20.11.1",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.8.0",
+    "vitest": "^4.1.10",
     "vue-tsc": "^3.3.7"
   },
   "packageManager": "pnpm@10.33.4",

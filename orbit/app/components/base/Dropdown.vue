@@ -11,8 +11,14 @@ import {
   SelectValue,
   SelectViewport,
 } from 'reka-ui'
+import { computed } from 'vue'
 
-defineProps<{ options: { value: string, label: string }[], ariaLabel?: string }>()
+export interface Props {
+  options: { value: string, label: string }[]
+  ariaLabel?: string
+}
+
+defineProps<Props>()
 const model = defineModel<string>({ required: true })
 
 // Reka treats an empty-string model as "unselected" and blanks the trigger,
@@ -32,7 +38,10 @@ const inner = computed({
     >
       <SelectValue class="overflow-hidden text-ellipsis whitespace-nowrap" />
       <SelectIcon class="flex text-faint">
-        <Icon name="lucide:chevron-down" :size="13" />
+        <Icon
+          name="lucide:chevron-down"
+          :size="13"
+        />
       </SelectIcon>
     </SelectTrigger>
     <SelectPortal>
@@ -50,7 +59,10 @@ const inner = computed({
           >
             <SelectItemText>{{ o.label }}</SelectItemText>
             <SelectItemIndicator class="flex text-accent-soft">
-              <Icon name="lucide:check" :size="13" />
+              <Icon
+                name="lucide:check"
+                :size="13"
+              />
             </SelectItemIndicator>
           </SelectItem>
         </SelectViewport>
