@@ -72,3 +72,37 @@ func TestCORSDisabledWhenUnconfigured(t *testing.T) {
 		t.Errorf("CORS headers present with no config: %q", got)
 	}
 }
+
+// TestCORSWildcardCacheSafe pins the poisoned-cache download fix: /images
+// responses are cached for a year (immutable), and a no-cors <img> request
+// carries no Origin header. If the wildcard allow-origin were only emitted
+// for Origin-bearing requests, the cached copy would fail every later CORS
+// fetch of the same URL — the silent "Download does nothing" bug. Wildcard
+// must be unconditional.
+func TestCORSWildcardCacheSafe(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/nonexistent", nil) // no Origin
+	rec := httptest.NewRecorder()
+	corsServer("*").ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("allow-origin without Origin header = %q, want *", got)
+	}
+}
+
+// TestCORSNamedOriginVaries: when allow-origin depends on the request
+// origin, every response must carry Vary: Origin — including responses to
+// requests with no Origin at all — or shared caches mix them up.
+func TestCORSNamedOriginVaries(t *testing.T) {
+	h := corsServer("capacitor://localhost")
+
+	for _, origin := range []string{"", "capacitor://localhost", "https://evil.example"} {
+		req := httptest.NewRequest(http.MethodGet, "/nonexistent", nil)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if got := rec.Header().Get("Vary"); got != "Origin" {
+			t.Errorf("origin=%q: Vary = %q, want Origin", origin, got)
+		}
+	}
+}
