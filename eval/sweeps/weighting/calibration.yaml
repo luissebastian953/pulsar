@@ -1,0 +1,56 @@
+# Prompt-weight calibration sweep (reports/NovelAI prompt weighting on
+# SDXL.md S10). Fits the per-lineage curve in core/internal/assembly
+# lineageSpecs (prompt.Calibration{KUp, Hi, KDown, Lo}); the shipped values
+# (illustrious 1.0/1.4/1.0/0.3, noobai 1.0/1.3/1.0/0.3) are starting points,
+# not measured limits.
+#
+# STATUS: spec only — DO NOT RUN YET. The axis below is in EMITTED units
+# (what ComfyUI receives), but /generate takes NovelAI units and maps them
+# through the very curve this sweep fits, which saturates at the current
+# Hi by design: emitted 1.5/1.6 are unreachable through a user prompt.
+# run.py needs a `weight_units: emitted` mode before this runs — weights
+# ≤ the current Hi via the inverse curve, the rest via an eval-only config
+# surface (config prompts are identity-calibrated, bounded (0, 2]; e.g. a
+# temporary style row whose prompt_suffix carries `(tag:w)`), torn down
+# after the run. Never add a safety-content arm: negative weights relocate
+# to UC and zero is dropped, so inverted safety copies cannot be built
+# (S10 last paragraph).
+name: weighting-calibration
+seeds: [7, 42, 1234, 7777, 3, 11, 21, 88]
+weight_units: emitted
+lineages:
+  illustrious:
+    params: { lineage: illustrious, checkpoint: illustrious-xl.safetensors }
+    rescale: [0]                 # eps: rescale is inert
+  noobai:
+    params: { lineage: noobai, checkpoint: noobai-xl-vpred.safetensors }
+    rescale: [0.4, 0.55, 0.7]    # RescaleCFG may absorb slightly higher weights (S4)
+params:
+  quality_tags: true
+  auto_reference: false
+  # CFG: each lineage's default (assembly lineageSpecs) — left unset on purpose
+axes:
+  weight: [0.3, 0.5, 0.7, 0.9, 1.0, 1.05, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6]
+# 12 well-grounded targets (post count far above MIN_POST_COUNT), one
+# weighted at a time inside a fixed neutral scene. Re-check every count with
+# GET /tags/lookup before a gated run (CLAUDE.md #4).
+scene: "1girl, solo, standing, simple background, {target}"
+targets:
+  colour:      [red hair, blue eyes, green background]
+  clothing:    [school uniform, black thighhighs, witch hat]
+  composition: [from above, upper body, dutch angle]
+  object:      [umbrella]
+  # WD EVA02 has no artist tags: adherence for these is rubric/CSD only.
+  # Pick two artists with ≥ 5k posts via /tags/lookup; never invent names.
+  artist:      ["{artist_a}", "{artist_b}"]
+metrics:
+  adherence: sentinel tagger probability of the target (/classify?include=<target>)
+  overcook: saturation + clipped-pixel fraction vs the weight-1.0 baseline, same seed
+  stability: image-embedding similarity to the weight-1.0 baseline, same seed
+fit:
+  Hi: largest emitted weight whose overcook stays within tolerance of baseline on >= 7 of 8 seeds
+  Lo: smallest weight that still moves adherence monotonically
+  KUp: NAI {{x}} (1.1025) gives a perceptible, sub-overcook adherence gain
+  KDown: keep 1.0 unless the low end is non-monotone
+  bounds: "code clamps: Hi ∈ [1.0, 1.6], Lo ∈ [0.1, 1.0], K ∈ [0, 2]"
+columns: 12

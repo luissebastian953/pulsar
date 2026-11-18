@@ -122,7 +122,12 @@ const QUALITY_TAGS = new Set(['masterpiece', 'best_quality', 'very_aesthetic', '
 // applyable composer config: known tags land in their controls, the remainder
 // becomes prompt text (canonical tags ground exactly, so nothing is lost).
 export function paramsToPoseConfig(p: GenerationParams): PoseConfig {
-  let tags = p.prompt.split(',')
+  // structured rows: the user's own tags by name (quality/style/anchors are
+  // core's); legacy rows: the emitted string, split
+  const raw = p.prompt_tags
+    ? p.prompt_tags.filter(t => t.source === 'user').map(t => t.name)
+    : p.prompt.split(',')
+  let tags = raw
     .map(t => t.trim().replaceAll(' ', '_'))
     .filter(t => t && !QUALITY_TAGS.has(t) && t !== 'solo')
 

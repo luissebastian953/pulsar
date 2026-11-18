@@ -1,0 +1,3 @@
+# optional, for the assurance suite's CCIP identity metric and person counts
+# (sweeps/assurance/README.md). Pulls onnxruntime + model weights on first use.
+dghs-imgutils

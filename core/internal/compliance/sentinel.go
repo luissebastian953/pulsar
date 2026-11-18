@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,14 +34,19 @@ const (
 type Sentinel struct {
 	url  string
 	http *http.Client
-	// watch are normalized forbidden tags (from FORBIDDEN_TAG_UC) — the one
-	// list drives the negative prompt, prompt rejection, and output blocking.
-	watch     []string
+	// watch are normalized forbidden tags (from FORBIDDEN_TAG_UC): the
+	// output gate's scoring set, unchanged by the prompt-weighting work.
+	watch []string
+	// include is the classifier's include= list: tags.WatchSet (floor ∪
+	// FORBIDDEN_TAG_UC), so every watched tag's score is always present.
+	include   string
 	threshold float64
 	sumGate   float64
+	prompts   *Prompts
 }
 
-func NewSentinel(url, forbiddenUC string, threshold, sumGate float64) *Sentinel {
+// NewSentinel: complementTags is AGE_COMPLEMENT_TAGS (may be empty).
+func NewSentinel(url, forbiddenUC, complementTags string, threshold, sumGate float64) *Sentinel {
 	if threshold == 0 {
 		threshold = defaultThreshold
 	}
@@ -50,33 +56,26 @@ func NewSentinel(url, forbiddenUC string, threshold, sumGate float64) *Sentinel 
 	threshold = min(max(threshold, minThreshold), maxThreshold)
 	sumGate = min(max(sumGate, minSumThreshold), maxSumThreshold)
 	watch := tags.ParseForbidden(forbiddenUC)
+	include := make([]string, 0)
+	for t := range tags.WatchSet(forbiddenUC) {
+		include = append(include, t)
+	}
+	sort.Strings(include)
 	return &Sentinel{
 		url:       strings.TrimRight(url, "/"),
 		http:      &http.Client{Timeout: 30 * time.Second},
 		watch:     watch,
+		include:   strings.Join(include, ","),
 		threshold: threshold,
 		sumGate:   sumGate,
+		prompts:   NewPrompts(forbiddenUC, complementTags),
 	}
 }
 
-// CheckPrompt rejects positive prompts — global and per-character — that
-// ask for forbidden content.
+// CheckPrompt applies the prompt policy (prompt.go) to every surface
+// ComfyUI receives — positive, negative and each character prompt.
 func (s *Sentinel) CheckPrompt(_ context.Context, spec assembly.Spec) (Decision, error) {
-	prompts := []string{spec.Prompt}
-	for _, c := range spec.Characters {
-		prompts = append(prompts, c.Prompt)
-	}
-	for _, p := range prompts {
-		for _, part := range strings.Split(p, ",") {
-			name := tags.Normalize(part)
-			for _, w := range s.watch {
-				if name == w {
-					return Decision{Allowed: false, Reason: "forbidden tag in prompt: " + name}, nil
-				}
-			}
-		}
-	}
-	return Decision{Allowed: true}, nil
+	return s.prompts.Check(spec)
 }
 
 func (s *Sentinel) CheckOutput(ctx context.Context, image []byte) (Decision, error) {
@@ -94,7 +93,7 @@ type scores struct {
 
 func (s *Sentinel) classify(ctx context.Context, image []byte) (Decision, error) {
 	// include= forces watch tags into the response even sub-floor
-	u := s.url + "/classify?include=" + strings.Join(s.watch, ",")
+	u := s.url + "/classify?include=" + s.include
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(image))
 	if err != nil {
 		return Decision{}, err

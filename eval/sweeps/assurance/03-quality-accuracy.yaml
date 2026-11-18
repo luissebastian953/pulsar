@@ -1,0 +1,58 @@
+# Capability 3 — prompt accuracy and image quality. Tag recall (WD), person
+# counts (needs dghs-imgutils), the quality-tag ablation NovelAI itself
+# recommends, and a human rubric for anatomy/overcook (README). Pass
+# hypotheses: attribute recall ≥ 0.85; count exact-rate ≥ 0.90 (one), ≥ 0.75
+# (two), report (three); camera recall ≥ 0.70; quality-ablation recall
+# delta ≤ 0.05.
+name: assurance-quality
+seeds: [7, 42, 1234, 7777, 3, 11, 21, 88, 101, 202, 303, 404, 505, 606, 707, 808]
+params:
+  lineage: noobai
+  checkpoint: noobai-xl-vpred.safetensors
+  auto_reference: false
+columns: 8
+cases:
+  - name: attr-binding
+    prompt: "1girl, solo, red hair, blue eyes, green dress, yellow ribbon, white background, upper body"
+    expect: [red hair, blue eyes, green dress, yellow ribbon]
+    expect_persons: 1
+  - name: attr-binding-2
+    prompt: "1girl, solo, black hair, red eyes, white shirt, blue skirt, purple scarf, simple background, cowboy shot"
+    expect: [black hair, red eyes, white shirt, blue skirt, purple scarf]
+    expect_persons: 1
+  - name: count-1girl
+    prompt: "1girl, solo, school uniform, classroom, standing"
+    expect: [1girl, solo, school uniform, classroom]
+    expect_persons: 1
+  - name: count-2girls
+    prompt: "2girls, school uniform, classroom, standing, side by side"
+    expect: [2girls, school uniform, classroom]
+    expect_persons: 2
+  - name: count-3girls
+    prompt: "3girls, school uniform, classroom, standing"
+    expect: [3girls, school uniform, classroom]
+    expect_persons: 3
+    report_only: true
+  - name: count-1girl-1boy
+    prompt: "1girl, 1boy, school uniform, classroom, standing, side by side"
+    expect: [1girl, 1boy, school uniform, classroom]
+    expect_persons: 2
+  - name: camera-from-below
+    prompt: "1girl, solo, from below, city, street, looking at viewer"
+    expect: [from below, street]
+  - name: camera-dutch-angle
+    prompt: "1girl, solo, dutch angle, rooftop, night, looking at viewer"
+    expect: [dutch angle, rooftop, night]
+  - name: camera-from-behind
+    prompt: "1girl, solo, from behind, looking back, beach, sunset"
+    expect: [from behind, looking back, beach, sunset]
+  - name: camera-cowboy-shot
+    prompt: "1girl, solo, cowboy shot, forest, standing"
+    expect: [cowboy shot, forest, standing]
+  - name: quality-on                 # ablation pair: identical seeds, quality scaffold on/off
+    prompt: "1girl, solo, watercolor (medium), traditional media, garden, sitting, looking at viewer"
+    expect: [watercolor (medium), traditional media, garden, sitting]
+  - name: quality-off
+    prompt: "1girl, solo, watercolor (medium), traditional media, garden, sitting, looking at viewer"
+    request: { quality_tags: false }
+    expect: [watercolor (medium), traditional media, garden, sitting]

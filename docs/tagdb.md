@@ -84,8 +84,41 @@ affordance NovelAI's single text box can't offer.
 Earlier tags weigh more. `assembly` sorts grounded tags by `post_count` descending —
 strong, well-known tags first. Quality tags precede everything.
 
-Prompt weighting (`(tag:1.3)`) is the escape hatch when grounding picks a real tag
-that's too weak. Expose it in the editor; don't try to infer it.
+Prompt weighting (`1.3::tag ::`) is the escape hatch when grounding picks a real tag
+that's too weak. Expose it in the editor; don't try to infer it — `/translate`
+keeps weights the user typed and never lets the LLM invent one.
+
+## Weighting
+
+Every prompt surface — the prompt, Undesired Content, each character box —
+is parsed by `core/internal/prompt` before anything reads it, and each
+surface starts at weight 1.0 (nothing carries between boxes). The dialect is
+NovelAI's (reports/NovelAI prompt weighting on SDXL.md):
+
+| Syntax | Meaning |
+|---|---|
+| `{tag}` / `[tag]` | ×1.05 / ÷1.05 per bracket (`{{tag}}` = 1.1025). `[x]` is NovelAI's ÷1.05, **not** A1111's ÷1.1 |
+| `1.3::tag ::` | weight 1.3 until the bare `::` (keep the space before the closing `::`, or a tag ending in digits becomes the weight: `year 2000::` is rejected — write `year 2000 ::`) |
+| `(tag:1.3)` | SD/ComfyUI syntax, auto-converted to `1.3::tag ::` with a notice. Nested or ambiguous SD groups (`((x):1.2)`) are rejected |
+| `(tag)` | **literal** parentheses, as on NovelAI — Danbooru names like `castorice (honkai: star rail)` rely on it. Emitted escaped (`\(`/`\)`), so ComfyUI no longer reads the qualifier as a ×1.1 group |
+| `-1::hat ::` | negative weight in a prompt: moved to Undesired Content at weight 1 (notice). In UC itself a negative weight is rejected — it would steer *toward* the tag |
+| `0::x ::` | dropped with a notice (SDXL has no meaning for zero) |
+| `\|`, `<lora:…>`, `embedding:`, `:::` | rejected (use character boxes / the LoRA picker; embeddings aren't supported) |
+
+Brackets are **scoped** in pulsar: `{`/`[` must close with their own `}`/`]`,
+and the closer restores the weight in effect before the opener. Unclosed,
+stray and mismatched brackets are errors with an exact location (UTF-16
+offsets + tag index — orbit marks the chip/span). `w::` overwrites the weight
+inside the current scope and a bare `::` resets it to 1 there; neither closes
+a bracket. With balanced input this equals NovelAI's running-weight math
+except where a numeric `w::` sits inside brackets: NovelAI's `{1.8::x}, y`
+leaks 1.8/1.05 = 1.714 onto `y`; pulsar's `}` restores 1.0. An unclosed `w::`
+section at the end of a prompt is legal and runs to the end (notice).
+
+The parsed NovelAI-unit weight is then mapped through the lineage's
+calibration curve (docs/tuning.md#prompt-weights) and emitted as one flat
+`(text:w)` group per run — never nested, never spanning a comma.
+`POST /prompt/parse` exposes the parser to orbit for live validation.
 
 ## Quality tags are lineage-specific
 
@@ -172,8 +205,15 @@ Consensus exemplar = the top-scored solo post whose OWN tags agree with the
 character's dominant hair-design tags (≥50% of sampled posts). Score alone
 picks popular alt-outfit or mistagged art — a pink-haired outlier for a
 black-haired character taught us that; requiring design agreement keeps the
-pick canonical. Gates at the source: rating g/s, png/jpeg only, single
-character tag, forbidden tags excluded. The bytes then flow through the
+pick canonical. Gates at the source: rating g only (in the query and
+re-checked), png/jpeg only, single character tag, forbidden tags excluded.
+Default outfit beats costume as a tier, not a score penalty: any post
+tagged `*_costume`, `cosplay`, `halloween` or `christmas` is a fallback
+only. Both rules come from live Castorice: the sample was 32/50
+sensitive-rated, and a score-142 sensitive `ghost_costume` post beat
+every canonical one. The reference conditions outfit, body and pose, not
+just the face, and nobody chose it, so it must be the plainest canonical
+image available. The bytes then flow through the
 SAME ingest path as user uploads — normalize, then the compliance hook,
 fail closed. `auto_reference: false` disables per request. Blob ids cache
 per character for the process lifetime.

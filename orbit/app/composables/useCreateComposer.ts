@@ -1,5 +1,6 @@
-import type { GenerationRequest, TranslatedTag } from '~/types/api'
+import type { GenerationRequest, PromptIssue, StylePreset, TranslatedTag } from '~/types/api'
 import { blobKeys, usePendingConfig, type Preset, type PresetConfig } from '~/composables/usePresets'
+import { chipsWithIssues } from '~/utils/prompt-issues'
 
 // The whole /create composer: state, lineage rules, uploads, generation, and
 // preset capture/apply. The page owns only template wiring and modal open
@@ -64,6 +65,35 @@ export function useCreateComposer() {
     return list.find(c => ckptIsVpred(c) === wantVpred) ?? current
   }
 
+  // ── style presets ─────────────────────────────────────────────────
+  // Server-side recipes (GET /styles): prompt carriers, finish tags, negative
+  // and LoRA merge in core. The sampler profile is written into the visible
+  // fields here so what the user sees is what runs — core lets request values
+  // win, so the fields stay editable after a style is picked.
+  const styles = ref<StylePreset[]>([])
+  const styleSlug = ref('')
+  const stylesForLineage = computed(() => styles.value.filter(s => s.lineage === lineage.value))
+  const activeStyle = computed(() => stylesForLineage.value.find(s => s.slug === styleSlug.value))
+  // a style's LoRA takes the second LoRA slot in core (two-LoRA cap)
+  const styleHasLora = computed(() => !!activeStyle.value?.lora)
+
+  function applyStyleSettings(s: StylePreset | undefined) {
+    const d = LINEAGE_DEFAULTS[lineage.value]
+    steps.value = s?.steps ?? d.steps
+    guidance.value = s?.cfg ?? d.guidance
+    sampler.value = s?.sampler ?? d.sampler
+    scheduler.value = s?.scheduler ?? d.scheduler
+    cfgRescale.value = s?.cfg_rescale ?? d.rescale
+    if (s?.hires != null) sizeTier.value = s.hires ? ((s.hires_scale ?? 1.5) >= 2 ? 'ultra' : 'large') : 'normal'
+    else if (!s) sizeTier.value = 'normal'
+  }
+  watch(styleSlug, (slug, prev) => {
+    // '' → '' happens when a preset without a style loads; nothing to reset
+    if (!slug && !prev) return
+
+    applyStyleSettings(activeStyle.value)
+  })
+
   watch(lineage, (l) => {
     const d = LINEAGE_DEFAULTS[l]
     steps.value = d.steps
@@ -72,6 +102,10 @@ export function useCreateComposer() {
     scheduler.value = d.scheduler
     cfgRescale.value = d.rescale
     activeCheckpoint.value = pickCheckpoint(l, checkpoints.value, activeCheckpoint.value)
+    // a style is a per-lineage recipe: keep the slug if the new lineage has a
+    // row for it (and re-apply that row over the reset), otherwise drop it
+    if (styleSlug.value && !stylesForLineage.value.some(s => s.slug === styleSlug.value)) styleSlug.value = ''
+    else if (styleSlug.value) applyStyleSettings(activeStyle.value)
   })
 
   const loraName = ref('')
@@ -80,7 +114,7 @@ export function useCreateComposer() {
   const lora2Name = ref('')
   const lora2Strength = ref(0.65)
 
-  const folds = reactive({ und: false, chars: false, ref: false, i2i: false, adv: false })
+  const folds = reactive({ style: false, und: false, chars: false, ref: false, i2i: false, adv: false })
 
   // pose → create handoff ("Use this pose")
   const poseRef = useState<{ seed: string, label: string } | null>('poseRef', () => null)
@@ -176,8 +210,10 @@ export function useCreateComposer() {
     chars.value.filter(c => c.enabled && c.text.trim()))
 
   const promptText = computed(() => {
+    // plain mode sends core's NovelAI-syntax rendering of the grounded tags
+    // (weights kept); older cores without it fall back to bare names
     const base = mode.value === 'plain'
-      ? translate.tags.value.map(t => t.canonical)
+      ? (translate.nai.value ? [translate.nai.value] : translate.tags.value.map(t => t.canonical))
       : tagList.value
     // 2-3 characters go regional (each prompt conditions its own column);
     // a single character just merges into the prompt
@@ -190,8 +226,93 @@ export function useCreateComposer() {
   const cost = computed(() =>
     batch.value * (17 + (sizeTier.value === 'ultra' ? 16 : hires.value ? 8 : 0)))
 
+  // ── prompt validation (docs/frontend.md#prompt-validation) ──────────
+  // Live: debounced POST /prompt/parse per surface. Server: /generate's
+  // located 400, shown while the field's text is what was sent.
+  const promptSurfaceText = computed(() => (mode.value === 'tags' ? tagList.value.join(', ') : prompt.value))
+  const promptLive = usePromptParse(() => promptSurfaceText.value, 'prompt', () => lineage.value)
+  const undLive = usePromptParse(() => und.value, 'negative', () => lineage.value)
+
+  // what the last /generate sent, to map its 400 back onto a field
+  const sent = ref<{ mode: 'plain' | 'tags', chips: string, und: string, regional: { idx: number, text: string }[], merged: { idx: number, text: string } | null } | null>(null)
+
+  const serverIssues = computed(() => {
+    const out = { prompt: [] as PromptIssue[], promptMarks: [] as PromptIssue[], negative: [] as PromptIssue[], chars: {} as Record<number, PromptIssue[]> }
+    const iss = job.issue.value
+    const s = sent.value
+    if (!iss || !s) return out
+
+    if (iss.field === 'negative' && und.value === s.und) out.negative = [iss]
+    else if (iss.field.startsWith('characters.')) {
+      const r = s.regional[Number(iss.field.slice('characters.'.length))]
+      if (r && chars.value[r.idx]?.text.trim() === r.text) out.chars[r.idx] = [iss]
+    }
+    else if (iss.field === 'prompt') {
+      if (s.mode === 'plain') {
+        // offsets index core's rendering, not the prose: message only
+        if (prompt.value && mode.value === 'plain') out.prompt = [iss]
+      }
+      else if (s.merged && (s.chips === '' || iss.start >= s.chips.length + 2)) {
+        // a single character merges into the prompt: shift into its card
+        const shift = s.chips.length ? s.chips.length + 2 : 0
+        if (chars.value[s.merged.idx]?.text.trim() === s.merged.text) {
+          out.chars[s.merged.idx] = [{ ...iss, start: iss.start - shift, end: iss.end - shift }]
+        }
+      }
+      else if (tagList.value.join(', ') === s.chips && mode.value === 'tags') {
+        out.prompt = [iss]
+        out.promptMarks = [iss]
+      }
+    }
+
+    return out
+  })
+
+  const promptErrors = computed(() => {
+    if (promptLive.errors.value.length) return promptLive.errors.value
+
+    if (mode.value === 'plain' && translate.issue.value) return [translate.issue.value]
+
+    return serverIssues.value.prompt
+  })
+  const promptMarks = computed(() => {
+    if (promptLive.errors.value.length) return promptLive.errors.value
+
+    if (mode.value === 'plain' && translate.issue.value) return [translate.issue.value]
+
+    return serverIssues.value.promptMarks
+  })
+  const promptNotices = computed(() => promptLive.notices.value)
+  const invalidChips = computed(() => [...chipsWithIssues(tagList.value, promptMarks.value)])
+  const undErrors = computed(() => (undLive.errors.value.length ? undLive.errors.value : serverIssues.value.negative))
+  const undNotices = computed(() => undLive.notices.value)
+  const charServerErrors = (i: number) => serverIssues.value.chars[i] ?? []
+  // per-card validity reported by CharacterCard (its live parse lives there)
+  const charInvalid = reactive<Record<number, boolean>>({})
+  const charsInvalid = computed(() =>
+    chars.value.some((_, i) => charInvalid[i]) || Object.keys(serverIssues.value.chars).length > 0)
+
+  // a 400 inside a folded section opens it, so the mark is visible
+  watch(() => job.issue.value, (iss) => {
+    if (iss?.field === 'negative') folds.und = true
+
+    if (iss?.field.startsWith('characters.') || (iss?.field === 'prompt' && sent.value?.merged)) folds.chars = true
+  })
+
   function generate() {
     if (job.busy.value || !promptText.value) return
+
+    const regionalOn = activeChars.value.length >= 2 && activeChars.value.length <= 3
+    const active = chars.value
+      .map((c, idx) => ({ idx, text: c.text.trim(), on: c.enabled && !!c.text.trim() }))
+      .filter(c => c.on)
+    sent.value = {
+      mode: mode.value,
+      chips: tagList.value.join(', '),
+      und: und.value,
+      regional: regionalOn ? active.map(({ idx, text }) => ({ idx, text })) : [],
+      merged: !regionalOn && active.length === 1 ? { idx: active[0]!.idx, text: active[0]!.text } : null,
+    }
 
     const [width, height] = dims.value
     const req: GenerationRequest = {
@@ -215,6 +336,8 @@ export function useCreateComposer() {
     }
 
     if (activeCheckpoint.value) req.checkpoint = activeCheckpoint.value
+
+    if (styleSlug.value) req.style = styleSlug.value
 
     req.lineage = lineage.value
     if (lineage.value === 'noobai') req.cfg_rescale = cfgRescale.value
@@ -265,6 +388,8 @@ export function useCreateComposer() {
       // default lineage is NoobAI (v-pred); pair it with a matching checkpoint so
       // the first generation doesn't hit core's lineage/checkpoint mismatch guard
       activeCheckpoint.value = pickCheckpoint(lineage.value, ck.checkpoints, ck.active)
+      const st = await api.get<{ styles: StylePreset[] }>('/styles')
+      styles.value = st.styles
     }
     catch { /* no loras endpoint or none installed */ }
   })
@@ -308,6 +433,7 @@ export function useCreateComposer() {
       loraStrength: loraStrength.value,
       lora2Name: lora2Name.value,
       lora2Strength: lora2Strength.value,
+      style: styleSlug.value,
       charRef: charRefImg,
       charRefMode: charRefMode.value,
       charRefStrength: charRefStrength.value,
@@ -324,6 +450,10 @@ export function useCreateComposer() {
     // lineage first: its watcher resets sampler/guidance/steps/rescale, so let it
     // flush (nextTick) before writing the preset's own values, or they're clobbered.
     lineage.value = cfg.lineage ?? 'illustrious'
+    await nextTick()
+    // style second: its watcher writes the recipe's sampler profile, which the
+    // preset's own values below must override
+    styleSlug.value = cfg.style ?? ''
     await nextTick()
 
     prompt.value = cfg.prompt ?? ''
@@ -401,6 +531,7 @@ export function useCreateComposer() {
       c.i2i ? 'img2img' : '',
       c.charRef ? 'reference' : '',
       c.loraName ? 'lora' : '',
+      c.style ? `style · ${c.style}` : '',
     ].filter(Boolean).join(' · ')
   }
   const drawerPresets = computed(() =>
@@ -435,12 +566,16 @@ export function useCreateComposer() {
   return {
     // describe
     prompt, mode, tagList, und, chars, translate, stripTags, charBadge,
+    // prompt validation
+    promptErrors, promptMarks, promptNotices, invalidChips, undErrors, undNotices, charServerErrors, charInvalid, charsInvalid,
     // image
     aspect, batch, sizeTier, dims,
     // advanced
     lineage, cfgRescale, checkpoints, activeCheckpoint, steps, guidance,
     seedText, sampler, scheduler, qualityTags, faceDetail,
     loras, loraName, loraStrength, lora2Name, lora2Strength,
+    // style presets
+    stylesForLineage, styleSlug, activeStyle, styleHasLora,
     // reference + pose handoff
     charRef, charRefMode, charRefStrength, charRefFidelity, poseRef, refStrength,
     // img2img / inpaint

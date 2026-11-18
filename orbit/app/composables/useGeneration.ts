@@ -1,4 +1,5 @@
-import type { GenerationRequest, JobPayload, PoseRole } from '~/types/api'
+import type { GenerationRequest, JobPayload, PoseRole, PromptErrorBody, PromptIssue } from '~/types/api'
+import { promptErrorFrom } from '~/utils/prompt-issues'
 
 export type GenPhase = 'idle' | 'queued' | 'generating' | 'done' | 'failed' | 'blocked'
 
@@ -13,6 +14,10 @@ export function useJob(onDone?: (job: JobPayload) => void) {
   // per-role URLs for multi-output kinds (pose: source/lineart/skeleton)
   const images = ref<Partial<Record<PoseRole, string>>>({})
   const error = ref('')
+  // core's located 400 when a prompt failed to parse (field + span)
+  const issue = ref<PromptErrorBody | null>(null)
+  // notices from the 202 (relocated to UC, converted from SD syntax, …)
+  const notices = ref<(PromptIssue & { field: string })[]>([])
   const seed = ref('')
   let es: EventSource | null = null
 
@@ -30,8 +35,11 @@ export function useJob(onDone?: (job: JobPayload) => void) {
     imageUrl.value = ''
     images.value = {}
     error.value = ''
+    issue.value = null
     try {
-      const { job_id } = await api.post<{ job_id: string }>('/generate', req)
+      const res = await api.post<{ job_id: string, notices?: (PromptIssue & { field: string })[] }>('/generate', req)
+      const job_id = res.job_id
+      notices.value = res.notices ?? []
       es = new EventSource(`${api.base}/jobs/${job_id}/stream`)
       es.addEventListener('queue', (e) => {
         const p = JSON.parse(e.data) as JobPayload
@@ -70,6 +78,7 @@ export function useJob(onDone?: (job: JobPayload) => void) {
       phase.value = 'failed'
       const err = e as { data?: { error?: string } }
       error.value = err.data?.error || 'request failed — is core running?'
+      issue.value = promptErrorFrom(e)
     }
   }
 
@@ -84,7 +93,7 @@ export function useJob(onDone?: (job: JobPayload) => void) {
 
   onScopeDispose(close)
 
-  return { phase, step, total, queuePos, imageUrl, images, error, seed, start, showResult, busy }
+  return { phase, step, total, queuePos, imageUrl, images, error, issue, notices, seed, start, showResult, busy }
 }
 
 export type JobTracker = ReturnType<typeof useJob>

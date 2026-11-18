@@ -1,0 +1,61 @@
+# Capability 2 — characters newer than the model. Four tiers (README):
+#   i   pre-cutoff, known to NoobAI AND to the WD tagger (calibration controls)
+#   ii  in NoobAI (debut before 2024-10-23) but after the tagger's 2024-02 vocab
+#       — separates tagger blindness from model ignorance
+#   iii post-cutoff with ≥600 posts by Jan 2025
+#   iv  post-cutoff, 2025–2026 debuts
+# Two arms on identical seeds: `anchors` (core injects Danbooru design-anchor
+# tags for post-cutoff names) and `autoref` (anchors + the consensus Danbooru
+# reference through IP-Adapter). expect "@resolved" scores the tags core
+# actually sent (incl. injected anchors). Identity needs CCIP references:
+#   for t in <tags>; do ./eval/.venv/bin/python eval/fetch-refs.py "$t"; done
+# Tag names were verified against the live Danbooru API on 2026-11-14; post
+# counts drift daily; per-character debut dates are NOT verified — confirm
+# first-post dates before promoting a tier-iv result to a claim. Arm A on
+# tiers iii/iv is expected to FAIL identity; if it passes, the character
+# leaked into the base model: reclassify it as a control.
+name: assurance-new-characters
+seeds: [7, 42, 1234, 7777, 3, 11, 21, 88]
+params:
+  lineage: noobai
+  checkpoint: noobai-xl-vpred.safetensors
+columns: 8
+template:
+  prompt: "{char}, {series}, {count}, solo, upper body, looking at viewer, simple background"
+  expect: "@resolved"
+  identity: "refs/{slug}"
+  arms:
+    anchors: { auto_reference: false }
+    autoref: { auto_reference: true }
+subjects:
+  # tier i — controls (in NoobAI and in the WD head)
+  - { tier: i, name: furina, slug: "furina_(genshin_impact)", char: "furina (genshin impact)", series: "genshin impact", count: 1girl }
+  - { tier: i, name: miku, slug: "hatsune_miku", char: "hatsune miku", series: "vocaloid", count: 1girl }
+  - { tier: i, name: ganyu, slug: "ganyu_(genshin_impact)", char: "ganyu (genshin impact)", series: "genshin impact", count: 1girl }
+  - { tier: i, name: frieren, slug: "frieren", char: "frieren", series: "sousou no frieren", count: 1girl }
+  - { tier: i, name: kafka, slug: "kafka_(honkai:_star_rail)", char: "kafka (honkai: star rail)", series: "honkai: star rail", count: 1girl }
+  # tier ii — in NoobAI, absent from the WD head (tagger-blind controls)
+  - { tier: ii, name: acheron, slug: "acheron_(honkai:_star_rail)", char: "acheron (honkai: star rail)", series: "honkai: star rail", count: 1girl }
+  - { tier: ii, name: ellen, slug: "ellen_joe", char: "ellen joe", series: "zenless zone zero", count: 1girl }
+  - { tier: ii, name: zhu-yuan, slug: "zhu_yuan", char: "zhu yuan", series: "zenless zone zero", count: 1girl }
+  - { tier: ii, name: nicole, slug: "nicole_demara", char: "nicole demara", series: "zenless zone zero", count: 1girl }
+  - { tier: ii, name: jane-doe, slug: "jane_doe_(zenless_zone_zero)", char: "jane doe (zenless zone zero)", series: "zenless zone zero", count: 1girl }
+  # tier iii — post-cutoff, ≥600 posts by Jan 2025
+  - { tier: iii, name: miyabi, slug: "hoshimi_miyabi", char: "hoshimi miyabi", series: "zenless zone zero", count: 1girl }
+  - { tier: iii, name: mavuika, slug: "mavuika_(genshin_impact)", char: "mavuika (genshin impact)", series: "genshin impact", count: 1girl }
+  - { tier: iii, name: citlali, slug: "citlali_(genshin_impact)", char: "citlali (genshin impact)", series: "genshin impact", count: 1girl }
+  - { tier: iii, name: camellya, slug: "camellya_(wuthering_waves)", char: "camellya (wuthering waves)", series: "wuthering waves", count: 1girl }
+  # tier iv — post-cutoff, 2025–2026
+  - { tier: iv, name: phainon, slug: "phainon_(honkai:_star_rail)", char: "phainon (honkai: star rail)", series: "honkai: star rail", count: 1boy }
+  - { tier: iv, name: cyrene, slug: "cyrene_(honkai:_star_rail)", char: "cyrene (honkai: star rail)", series: "honkai: star rail", count: 1girl }
+  - { tier: iv, name: castorice, slug: "castorice_(honkai:_star_rail)", char: "castorice (honkai: star rail)", series: "honkai: star rail", count: 1girl }
+  - { tier: iv, name: aglaea, slug: "aglaea_(honkai:_star_rail)", char: "aglaea (honkai: star rail)", series: "honkai: star rail", count: 1girl }
+  - { tier: iv, name: the-herta, slug: "the_herta_(honkai:_star_rail)", char: "the herta (honkai: star rail)", series: "honkai: star rail", count: 1girl }
+  - { tier: iv, name: remielle, slug: "remielle_dan", char: "remielle dan", series: "zenless zone zero", count: 1girl }
+  - { tier: iv, name: vivian, slug: "vivian_banshee", char: "vivian banshee", series: "zenless zone zero", count: 1girl }
+  - { tier: iv, name: evelyn, slug: "evelyn_chevalier", char: "evelyn chevalier", series: "zenless zone zero", count: 1girl }
+  - { tier: iv, name: yixuan, slug: "yixuan_(zenless_zone_zero)", char: "yixuan (zenless zone zero)", series: "zenless zone zero", count: 1girl }
+  - { tier: iv, name: astra, slug: "astra_yao", char: "astra yao", series: "zenless zone zero", count: 1girl }
+  - { tier: iv, name: ju-fufu, slug: "ju_fufu", char: "ju fufu", series: "zenless zone zero", count: 1girl }
+  - { tier: iv, name: alice, slug: "alice_thymefield", char: "alice thymefield", series: "zenless zone zero", count: 1girl }
+  - { tier: iv, name: sunna, slug: "sunna_(zenless_zone_zero)", char: "sunna (zenless zone zero)", series: "zenless zone zero", count: 1girl }

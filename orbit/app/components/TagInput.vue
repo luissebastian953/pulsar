@@ -8,14 +8,21 @@ import {
   ComboboxRoot,
   ComboboxViewport,
 } from 'reka-ui'
+import { useTagAutocomplete } from '~/composables/useTagAutocomplete'
+import { formatCount } from '~/utils/format'
 
 // Reka combobox over core's /tags (docs/frontend.md §1); the search/commit
-// rules live in useTagAutocomplete.
+// rules live in useTagAutocomplete. invalid / invalidChips come from core's
+// prompt parser (docs/frontend.md#prompt-validation): the border turns red
+// and the offending chips red and bold.
 export interface Props {
   subset?: 'all' | 'pose'
+  invalid?: boolean
+  /** indices into the model of chips an error overlaps */
+  invalidChips?: number[]
 }
 
-const props = withDefaults(defineProps<Props>(), { subset: 'all' })
+const props = withDefaults(defineProps<Props>(), { subset: 'all', invalid: false, invalidChips: () => [] })
 const model = defineModel<string[]>({ required: true })
 
 const { query, suggestions, open, add, remove, onKeydown }
@@ -30,13 +37,17 @@ const { query, suggestions, open, add, remove, onKeydown }
     @update:model-value="v => add(String(v))"
   >
     <ComboboxAnchor
-      class="flex min-h-[92px] w-full flex-wrap content-start items-center gap-1.5 rounded-ctrl border border-line bg-void p-2.5 focus-within:border-line-hi"
+      class="flex min-h-[92px] w-full flex-wrap content-start items-center gap-1.5 rounded-ctrl border bg-void p-2.5"
+      :class="invalid ? 'border-danger' : 'border-line focus-within:border-line-hi'"
+      :data-invalid="invalid || undefined"
+      data-test="tag-input"
     >
       <BaseTagChip
-        v-for="t in model"
+        v-for="(t, i) in model"
         :key="t"
         :name="t"
         category="general"
+        :invalid="invalidChips.includes(i)"
         removable
         @remove="remove(t)"
       />
@@ -47,7 +58,8 @@ const { query, suggestions, open, add, remove, onKeydown }
         @keydown="onKeydown"
       />
     </ComboboxAnchor>
-    <ComboboxPortal>
+    <!-- no empty popover: it would cover the error/notice labels below -->
+    <ComboboxPortal v-if="suggestions.length">
       <ComboboxContent
         position="popper"
         :side-offset="6"

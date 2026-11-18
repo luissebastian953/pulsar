@@ -1,5 +1,6 @@
 import { useLocalStorage } from '@vueuse/core'
 import type { GenerationParams } from '~/types/api'
+import { userTagTexts } from '~/utils/prompt-issues'
 
 // A stored image: its bytes live in IndexedDB under `blob` (see useBlobStore);
 // name/type let us reconstruct a File to re-upload to core on apply, because
@@ -45,6 +46,8 @@ export interface PresetConfig {
   loraStrength: number
   lora2Name: string
   lora2Strength: number
+  // style preset slug ('' = none); its recipe is re-applied on load
+  style: string
   // reference (Precise Reference + pose handoff)
   charRef: PresetImage | null
   charRefMode: 'character_style' | 'character' | 'style'
@@ -116,7 +119,7 @@ export function configSignature(c: PresetConfig): string {
   return JSON.stringify([
     c.prompt, c.tagList, c.und, c.lineage, c.activeCheckpoint,
     c.steps, c.guidance, c.cfgRescale, c.seedText, c.sampler, c.scheduler,
-    c.aspect, c.sizeTier, c.loraName, c.loraStrength, c.lora2Name, c.lora2Strength,
+    c.aspect, c.sizeTier, c.loraName, c.loraStrength, c.lora2Name, c.lora2Strength, c.style,
   ])
 }
 
@@ -127,9 +130,12 @@ const ASPECT_BY_DIMS: Record<string, PresetConfig['aspect']> = {
 }
 
 // paramsToPresetConfig turns a stored generation's params (from /history) into
-// an applyable config. The stored prompt/negative already include the
-// server-side quality tags and safety negative, so quality tags are set off to
-// avoid double-adding, and the prompt is carried as an exact tag list. Uploaded
+// an applyable config. The editor boxes are restored from the stored
+// structured tags whose source is "user", in NovelAI syntax (`nai`) — never
+// the safety block, the UC preset, quality or style tags (core re-adds
+// those), and never by re-splitting the emitted ComfyUI strings on commas.
+// Legacy rows without tags fall back to the old string split; core's
+// negative dedupe neutralises the safety copies they carry. Uploaded
 // source/reference images are NOT restored here (their blobs aren't in the
 // browser) — Save-as-preset from the composer is the path for full image round-trip.
 export function paramsToPresetConfig(p: GenerationParams): PresetConfig {
@@ -137,12 +143,13 @@ export function paramsToPresetConfig(p: GenerationParams): PresetConfig {
   const sizeTier: PresetConfig['sizeTier']
     = hires ? ((p.hires_scale ?? 1.5) >= 2 ? 'ultra' : 'large') : 'normal'
   const [l1, l2] = p.loras ?? []
+  const structured = !!p.prompt_tags
   return {
     prompt: '',
     mode: 'tags',
-    tagList: p.prompt.split(',').map(t => t.trim()).filter(Boolean),
-    und: (p.negative ?? '').trim(),
-    chars: (p.characters ?? []).map(c => ({ text: c.prompt, enabled: true, ref: null })),
+    tagList: structured ? userTagTexts(p.prompt_tags) : p.prompt.split(',').map(t => t.trim()).filter(Boolean),
+    und: p.negative_tags ? userTagTexts(p.negative_tags).join(', ') : (p.negative ?? '').trim(),
+    chars: (p.characters ?? []).map(c => ({ text: c.tags ? userTagTexts(c.tags).join(', ') : c.prompt, enabled: true, ref: null })),
     aspect: ASPECT_BY_DIMS[`${p.width}x${p.height}`] ?? 'portrait',
     batch: 1,
     sizeTier,
@@ -154,12 +161,15 @@ export function paramsToPresetConfig(p: GenerationParams): PresetConfig {
     seedText: p.seed != null ? String(p.seed) : '',
     sampler: p.sampler,
     scheduler: p.scheduler,
-    qualityTags: false,
+    // structured rows say whether quality tags were applied; legacy rows
+    // already carry them in the prompt string, so off avoids doubling
+    qualityTags: structured ? p.prompt_tags!.some(t => t.source === 'quality') : false,
     faceDetail: true,
     loraName: l1?.name ?? '',
     loraStrength: l1?.strength ?? 0.8,
     lora2Name: l2?.name ?? '',
     lora2Strength: l2?.strength ?? 0.65,
+    style: p.style ?? '',
     charRef: null,
     charRefMode: p.ref_mode ?? 'character_style',
     charRefStrength: p.ref_strength ?? 0.8,

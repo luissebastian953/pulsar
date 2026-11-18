@@ -117,8 +117,10 @@ look.
 Earlier tags weigh more. `assembly` sorts grounded tags by `post_count` descending.
 Quality tags precede everything.
 
-Don't infer prompt weighting `(tag:1.3)` — expose it in the editor as the escape
-hatch for real-but-weak tags.
+Don't infer prompt weighting `1.3::tag ::` — expose it in the editor as the escape
+hatch for real-but-weak tags. `/translate` parses weights before the LLM and
+grounds each weighted stretch separately; the LLM never sees an operator
+(docs/tagdb.md#weighting).
 
 ## One service, four boxes, two pages
 

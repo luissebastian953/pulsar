@@ -27,6 +27,8 @@ import (
 	"pulsar/core/internal/job"
 	"pulsar/core/internal/masks"
 	"pulsar/core/internal/nltag"
+	"pulsar/core/internal/prompt"
+	"pulsar/core/internal/style"
 	"pulsar/core/internal/tags"
 	"pulsar/core/internal/workflow"
 )
@@ -54,6 +56,9 @@ type Server struct {
 	Live *tags.Live
 	// Translator is nil when no LLM is configured; POST /translate then 503s.
 	Translator *nltag.Translator
+	// Styles serves GET /styles and resolves POST /generate's "style"; nil
+	// lists none and refuses any style.
+	Styles     *style.Store
 	Tpl        workflow.Graph // txt2img base, hash-verified at load
 	PoseTpl    workflow.Graph // pose base (spine + extraction), hash-verified at load
 	Img2ImgTpl workflow.Graph // img2img base (LoadImage → VAEEncode), hash-verified at load
@@ -89,9 +94,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /uploads", s.handleUpload)
 	mux.HandleFunc("GET /loras", s.handleLoras)
 	mux.HandleFunc("GET /checkpoints", s.handleCheckpoints)
+	mux.HandleFunc("GET /styles", s.handleStyles)
 	mux.HandleFunc("GET /tags", s.handleTags)
 	mux.HandleFunc("GET /tags/lookup", s.handleTagLookup)
 	mux.HandleFunc("POST /translate", s.handleTranslate)
+	mux.HandleFunc("POST /prompt/parse", s.handlePromptParse)
 	mux.HandleFunc("GET /history", s.handleHistory)
 	mux.HandleFunc("DELETE /history", s.handleDeleteHistory)
 	mux.HandleFunc("DELETE /history/{id}", s.handleDeleteHistoryItem)
@@ -107,8 +114,12 @@ var jobIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 // job id plus optional role suffix (…-lineart, …-skeleton)
 var imageIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[a-z]{1,16})?$`)
 
-// POST /generate: validate → CheckPrompt → assemble → build workflow →
-// enqueue → 202. Generation is 20–40s; it never blocks this handler.
+// POST /generate: decode → parse the prompt surfaces (400 with a span) →
+// validate → style lookup → autoAnchor on parsed tags → assemble
+// (calibrate, relocate, dedupe, emit) → CheckPrompt on the emitted strings
+// (422 reject / 503 fail closed) → build workflow → enqueue → 202 with the
+// parse notices. Generation is 20–40s; it never blocks this handler; the
+// worker's CheckOutput remains the gate.
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		assembly.Request
@@ -128,6 +139,9 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		// with a matching Checkpoint — a v-pred checkpoint on an eps lineage
 		// (or vice versa) produces garbage (docs/tuning.md).
 		Lineage string `json:"lineage"`
+		// Style names a preset from GET /styles for the request's lineage; its
+		// recipe merges in assembly (docs/tuning.md#style-presets).
+		Style string `json:"style"`
 		// AutoReference (default on) escalates a post-cutoff character to a
 		// consensus Danbooru reference image when no reference/image was
 		// given (docs/tagdb.md#anchors). false = anchors only.
@@ -141,6 +155,13 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := workflow.OutputRoles(req.Kind); !ok {
 		httpError(w, http.StatusBadRequest, "unknown kind "+strconv.Quote(req.Kind))
+		return
+	}
+	// every user surface is parsed before anything reads it; nothing below
+	// sees raw prompt text (reports/NovelAI prompt weighting on SDXL.md S1)
+	parsed, err := assembly.ParseRequest(req.Request)
+	if err != nil {
+		writeAssemblyError(w, err)
 		return
 	}
 	charRefs := 0
@@ -224,13 +245,37 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if req.Lineage != "" {
 		lineage = req.Lineage // validated in assembly.Build (unknown → 400)
 	}
+	// a style is a per-lineage recipe row; resolved here, merged in assembly
+	var styleOpt *assembly.Style
+	if req.Style != "" {
+		if s.Styles == nil {
+			httpError(w, http.StatusBadRequest, "styles are not configured on this deployment")
+			return
+		}
+		p, err := s.Styles.Get(r.Context(), req.Style, lineage)
+		if errors.Is(err, style.ErrNotFound) {
+			httpError(w, http.StatusBadRequest, fmt.Sprintf("unknown style %s for lineage %s", strconv.Quote(req.Style), strconv.Quote(lineage)))
+			return
+		}
+		if err != nil {
+			log.Printf("api: style lookup: %v", err)
+			httpError(w, http.StatusInternalServerError, "style lookup failed")
+			return
+		}
+		if !s.loraInstalled(p.Lora) {
+			httpError(w, http.StatusBadRequest, fmt.Sprintf("style %s needs LoRA %s, which is not installed", strconv.Quote(p.Slug), strconv.Quote(p.Lora)))
+			return
+		}
+		st := p.Assembly()
+		styleOpt = &st
+	}
 	// post-cutoff characters render by description: inject their Danbooru
 	// design vocabulary after the character tag, then escalate to a
 	// consensus reference image — text carries the palette, pixels carry
 	// the identity (docs/tagdb.md#anchors)
 	if s.Live != nil {
 		var newer []string
-		req.Prompt, newer = s.autoAnchor(r.Context(), req.Prompt, lineage)
+		parsed.Prompt.Tags, newer = s.autoAnchor(r.Context(), parsed.Prompt.Tags, lineage)
 		if len(newer) > 0 && req.Kind == "txt2img" && req.RefID == "" && req.ImageID == "" &&
 			charRefs == 0 && (req.AutoReference == nil || *req.AutoReference) {
 			if id, err := s.autoReference(r.Context(), newer[0]); err != nil {
@@ -252,12 +297,12 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	spec, err := assembly.Build(req.Request, assembly.Options{
-		Lineage: lineage, Seed: seed,
+	spec, notices, err := assembly.BuildParsed(req.Request, parsed, assembly.Options{
+		Lineage: lineage, Seed: seed, Style: styleOpt,
 		QualityTags: s.Cfg.QualityTags, DefaultUC: s.Cfg.DefaultUC, ForbiddenTagUC: s.Cfg.ForbiddenTagUC,
 	})
 	if err != nil {
-		httpError(w, http.StatusBadRequest, err.Error())
+		writeAssemblyError(w, err)
 		return
 	}
 
@@ -377,7 +422,11 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 
 	if err == nil && len(spec.Loras) > 0 {
 		if req.RefID != "" || len(spec.Characters) > 0 {
-			httpError(w, http.StatusBadRequest, "LoRA cannot combine with references or characters yet")
+			msg := "LoRA cannot combine with references or characters yet"
+			if styleOpt != nil && styleOpt.Lora != "" {
+				msg = "style " + strconv.Quote(spec.Style) + " carries a LoRA, which cannot combine with references or characters yet"
+			}
+			httpError(w, http.StatusBadRequest, msg)
 			return
 		}
 		l := spec.Loras[0]
@@ -419,7 +468,10 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, "enqueue failed")
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": j.ID})
+	if notices == nil {
+		notices = []assembly.Notice{}
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": j.ID, "notices": notices})
 }
 
 type jobPayload struct {
@@ -559,6 +611,41 @@ func (s *Server) handleLoras(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"loras": listModels(s.LoraDir)})
 }
 
+// loraInstalled reports whether a style's LoRA can load: no LoRA, or the
+// file is under LoraDir. An unset LoraDir can't be checked and is lenient,
+// matching checkpointInstalled on single-model deployments.
+func (s *Server) loraInstalled(name string) bool {
+	if name == "" || s.LoraDir == "" {
+		return true
+	}
+	for _, l := range listModels(s.LoraDir) {
+		if l == name {
+			return true
+		}
+	}
+	return false
+}
+
+// GET /styles — the deployment's style presets for the picker, every
+// lineage. Unavailable presets (LoRA not installed) are listed with
+// available=false so the UI can say what's missing instead of hiding it.
+func (s *Server) handleStyles(w http.ResponseWriter, r *http.Request) {
+	if s.Styles == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"styles": []style.Preset{}})
+		return
+	}
+	list, err := s.Styles.List(r.Context())
+	if err != nil {
+		log.Printf("api: list styles: %v", err)
+		httpError(w, http.StatusInternalServerError, "styles unavailable")
+		return
+	}
+	for i := range list {
+		list[i].Available = s.loraInstalled(list[i].Lora)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"styles": list})
+}
+
 // checkpointInstalled reports whether name is installed, or equals the
 // configured default (so single-checkpoint deployments still validate).
 func (s *Server) checkpointInstalled(name string) bool {
@@ -663,30 +750,31 @@ type tagView struct {
 // autoAnchor: for each character tag in the prompt that post-dates the
 // lineage's knowledge cutoff, splice its Danbooru design vocabulary in
 // right after the tag — the model can't know the name but knows every
-// component. Missing created_at dates (pre-freshness seeds) backfill
-// through Live, which also heals the autocomplete newer_than_model flag.
-// Every failure degrades to the unmodified prompt; anchoring never blocks
-// a generation. Also returns the post-cutoff character tags it found, so
-// the caller can escalate to an auto reference.
-func (s *Server) autoAnchor(ctx context.Context, prompt, lineage string) (string, []string) {
+// component. It reads PARSED tags (Tag.Name), so a weighted character tag
+// (`1.2::name (series) ::`) still anchors; anchors are Tag{Source: Anchor}
+// at weight 1, escaped by the emitter like any tag. Missing created_at
+// dates (pre-freshness seeds) backfill through Live, which also heals the
+// autocomplete newer_than_model flag. Every failure degrades to the
+// unmodified tags; anchoring never blocks a generation. Also returns the
+// post-cutoff character tags it found, so the caller can escalate to an
+// auto reference.
+func (s *Server) autoAnchor(ctx context.Context, in []prompt.Tag, lineage string) ([]prompt.Tag, []string) {
 	var newer []string
 	cutoff, ok := assembly.KnowledgeCutoff(lineage)
-	if !ok || strings.TrimSpace(prompt) == "" {
-		return prompt, nil
+	if !ok || len(in) == 0 {
+		return in, nil
 	}
-	parts := strings.Split(prompt, ",")
-	present := make(map[string]bool, len(parts))
-	for _, p := range parts {
-		present[tags.Normalize(p)] = true
+	present := make(map[string]bool, len(in))
+	for _, t := range in {
+		present[t.Name] = true
 	}
-	var out []string
-	for _, p := range parts {
-		out = append(out, p)
-		canonical := tags.Normalize(p)
-		if canonical == "" {
+	out := make([]prompt.Tag, 0, len(in))
+	for _, t := range in {
+		out = append(out, t)
+		if t.Name == "" || t.Source == prompt.Anchor {
 			continue
 		}
-		res, err := s.Tags.Resolve(ctx, canonical, false)
+		res, err := s.Tags.Resolve(ctx, t.Name, false)
 		if err != nil || res == nil || res.Category != "character" ||
 			(res.Stage != "exact" && res.Stage != "alias") {
 			continue
@@ -709,13 +797,17 @@ func (s *Server) autoAnchor(ctx context.Context, prompt, lineage string) (string
 		}
 		for _, a := range anchors {
 			present[a] = true
-			out = append(out, " "+strings.ReplaceAll(a, "_", " "))
+			text := strings.ReplaceAll(a, "_", " ")
+			out = append(out, prompt.Tag{
+				Runs: []prompt.Run{{Text: text, Weight: 1}}, Text: text, Name: prompt.Normalize(text),
+				Source: prompt.Anchor, Span: t.Span,
+			})
 		}
 		if len(anchors) > 0 {
 			log.Printf("api: anchored post-cutoff character %q with %d design tags", res.Canonical, len(anchors))
 		}
 	}
-	return strings.Join(out, ","), newer
+	return out, newer
 }
 
 // autoReference resolves a post-cutoff character to a reference blob: the

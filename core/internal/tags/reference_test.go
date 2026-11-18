@@ -1,6 +1,12 @@
 package tags
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func post(id, score int, rating, ext string, width int, charTags, genTags string) refPost {
 	return refPost{
@@ -24,6 +30,7 @@ func TestPickConsensusReference(t *testing.T) {
 		post(4, 80, "e", "jpg", 1200, char, "black_hair long_hair"),              // wrong rating
 		post(5, 70, "g", "gif", 1200, char, "black_hair long_hair"),              // undecodable format
 		post(6, 75, "g", "jpg", 1200, char+" other_(x)", "black_hair long_hair"), // not solo-character
+		post(8, 95, "s", "jpg", 1200, char, "black_hair long_hair"),              // sensitive: general-only gate
 	}
 	got := pickConsensusReference(posts, char, forbiddenRefFloor)
 	if got == nil || got.ID != 2 {
@@ -51,6 +58,63 @@ func TestPickConsensusReference(t *testing.T) {
 	}
 	if got := pickConsensusReference(nil, char, forbiddenRefFloor); got != nil {
 		t.Fatalf("empty input must yield nil")
+	}
+}
+
+// TestPickPrefersDefaultCostume pins the costume tier: any default-outfit
+// candidate beats every costumed one regardless of score (live Castorice:
+// a score-142 ghost_costume post beat the canonical design under the old
+// -40 penalty), and costumes are the fallback only when nothing else
+// qualifies.
+func TestPickPrefersDefaultCostume(t *testing.T) {
+	char := "castorice_(honkai:_star_rail)"
+	costumed := []refPost{
+		post(1, 300, "g", "jpg", 1200, char, "purple_hair long_hair ghost_costume"),
+		post(2, 140, "g", "jpg", 1200, char, "purple_hair long_hair halloween"),
+		post(3, 120, "g", "jpg", 1200, char, "purple_hair long_hair official_alternate_costume"),
+		post(4, 110, "g", "jpg", 1200, char, "purple_hair long_hair cosplay"),
+	}
+	posts := append(append([]refPost{}, costumed...),
+		post(5, 15, "g", "jpg", 1200, char, "purple_hair long_hair dress"))
+	if got := pickConsensusReference(posts, char, forbiddenRefFloor); got == nil || got.ID != 5 {
+		t.Fatalf("default outfit must beat every costume, picked %+v", got)
+	}
+	if got := pickConsensusReference(costumed, char, forbiddenRefFloor); got == nil || got.ID != 1 {
+		t.Fatalf("costume fallback should pick the best costumed post, picked %+v", got)
+	}
+}
+
+// TestConsensusReferenceQueriesGeneral: the Danbooru query itself asks for
+// rating:g (so the consensus sample is general posts), and the picked
+// post's bytes come back.
+func TestConsensusReferenceQueriesGeneral(t *testing.T) {
+	char := "castorice_(honkai:_star_rail)"
+	var gotTags string
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	mux.HandleFunc("GET /posts.json", func(w http.ResponseWriter, r *http.Request) {
+		gotTags = r.URL.Query().Get("tags")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": 12344863, "score": 21, "rating": "g", "file_ext": "jpg", "image_width": 1200,
+			"tag_string_character": char, "tag_string_general": "purple_hair long_hair dress upper_body",
+			"tag_string":     char + " purple_hair long_hair dress upper_body",
+			"large_file_url": srv.URL + "/ref.jpg",
+		}})
+	})
+	mux.HandleFunc("GET /ref.jpg", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("jpeg-bytes"))
+	})
+	l := NewLive(nil, srv.URL, 50, "loli")
+	data, id, fullBody, err := l.ConsensusReference(context.Background(), char, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := char + " solo rating:g"; gotTags != want {
+		t.Fatalf("query tags = %q, want %q", gotTags, want)
+	}
+	if string(data) != "jpeg-bytes" || id != 12344863 || fullBody {
+		t.Fatalf("got data=%q id=%d fullBody=%v", data, id, fullBody)
 	}
 }
 

@@ -1,0 +1,325 @@
+{
+  "name": "mihoyo-style",
+  "goal": "Push the flagship HSR/Genshin (miHoYo house style) recipe past the img2img crutch: pure txt2img, tag-carried identity, style from the HSR v3 LoRA + official-art tags alone. Jean (Genshin, 2020) and Acheron (HSR 2.1, 2024-03) are both inside NoobAI's 2024-10-23 cutoff, so identity needs no reference — this isolates the STYLE stack. Jean also tests cross-IP generalization (Genshin character through the HSR-trained LoRA).",
+  "base": {
+    "style": "official art, game cg",
+    "prompt": "masterpiece, best quality, very aesthetic, absurdres, highres, painterly, gradient hair, gradient eyes, sparkling eyes, eyelashes, shiny skin, glint, sparkle, glowing, depth of field, blurry background",
+    "negative": "(logo:1.3), worst quality, low quality, normal quality, bad quality, displeasing, very displeasing, lowres, blurry, upscaled, jpeg artifacts, artistic error, film grain, scan artifacts, chromatic aberration, halftone, bad anatomy, bad hands, bad proportions, extra arms, extra hands, long neck, anatomical nonsense, alternate costume, official alternate costume, missing fingers, extra digit, fewer digits, extra limbs, deformed, distortion, mismatched pupils, poorly drawn face, soft focus, motion blur, multiple views, multiple girls, 2girls, text, error, signature, watermark, username, cropped, out of frame, realistic, photorealistic",
+    "width": 832,
+    "height": 1216,
+    "seed": 88,
+    "lineage": "noobai",
+    "checkpoint": "noobai-xl-vpred.safetensors",
+    "sampler": "euler",
+    "scheduler": "normal",
+    "cfg": 5.0,
+    "steps": 28,
+    "hires": true,
+    "quality_tags": false,
+    "uc_preset": false,
+    "auto_reference": false,
+    "loras": [
+      {
+        "name": "honkai star rail_v3.safetensors",
+        "strength": 0.8
+      }
+    ],
+    "hires_scale": 1.5,
+    "hires_denoise": 0.55,
+    "cfg_rescale": 0.45
+  },
+  "variants": [
+    {
+      "label": "jean",
+      "note": "Genshin character through the HSR-style stack — cross-IP litmus. Original costume comes from the base character tag (the swimsuit alt has its own tag, so no guard needed) plus signature outfit tags.",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, light rays, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {}
+    },
+    {
+      "label": "acheron",
+      "note": "In-model HSR character, night scene — where v-pred + ZTSNR should beat eps outright (true darks, no grey wash). Outfit carried entirely by the character tag.",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot, purple theme",
+      "overrides": {}
+    },
+    {
+      "label": "jean-nolora",
+      "note": "ablation: do official-art tags on v-pred carry the style without the LoRA?",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "loras": []
+      }
+    },
+    {
+      "label": "acheron-nolora",
+      "note": "ablation: same, night scene",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot",
+      "overrides": {
+        "loras": []
+      }
+    },
+    {
+      "label": "jean-w08",
+      "note": "LoRA up to 0.8 — txt2img has no official-composition anchor, so the style may need more weight than the flagship's i2i 0.7. Watch for the v3 grunge flaw resurfacing.",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "loras": [
+          {
+            "name": "honkai star rail_v3.safetensors",
+            "strength": 0.8
+          }
+        ]
+      }
+    },
+    {
+      "label": "acheron-w08",
+      "note": "LoRA up to 0.8, night scene",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot",
+      "overrides": {
+        "loras": [
+          {
+            "name": "honkai star rail_v3.safetensors",
+            "strength": 0.8
+          }
+        ]
+      }
+    },
+    {
+      "label": "jean-a",
+      "note": "round-4 regen, seed 1234. Proven round-3 config unchanged (cowboy shot + grounded scaffold); seed is the only variable. `kneeling` deliberately NOT restored -- it only reads at full body, which is what broke the face in round 2.",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "seed": 1234
+      }
+    },
+    {
+      "label": "acheron-a",
+      "note": "round-4 regen, seed 1234, with the night fix: `backlighting` dropped from the scaffold so v-pred/ZTSNR keeps its true blacks (round-3 regression).",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "prompt": "masterpiece, best quality, very aesthetic, absurdres, highres, sparkling eyes, eyelashes, glowing, light particles, depth of field"
+      }
+    },
+    {
+      "label": "jean-b",
+      "note": "round-4 regen, seed 7777. Proven round-3 config unchanged (cowboy shot + grounded scaffold); seed is the only variable. `kneeling` deliberately NOT restored -- it only reads at full body, which is what broke the face in round 2.",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "seed": 7777
+      }
+    },
+    {
+      "label": "acheron-b",
+      "note": "round-4 regen, seed 7777, with the night fix: `backlighting` dropped from the scaffold so v-pred/ZTSNR keeps its true blacks (round-3 regression).",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot",
+      "overrides": {
+        "seed": 7777,
+        "prompt": "masterpiece, best quality, very aesthetic, absurdres, highres, sparkling eyes, eyelashes, glowing, light particles, depth of field"
+      }
+    },
+    {
+      "label": "jean-s1",
+      "note": "refinement A/B, seed 1234. Refined finish scaffold + noobai lineage sampler (euler/normal/cfg 5.0). Compare against jean-a (same seed, round-3 scaffold) to isolate the tag change.",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "prompt": "masterpiece, best quality, very aesthetic, absurdres, highres, painterly, gradient hair, gradient eyes, sparkling eyes, eyelashes, shiny skin, glint, sparkle, glowing, depth of field, blurry background, light rays"
+      }
+    },
+    {
+      "label": "jean-s2",
+      "note": "refinement A/B, seed 1234. Same refined scaffold as jean-s1 but the docs/tuning.md official-art finish recipe (dpmpp_2m/karras/cfg 5.5) — the long-deferred test of whether a karras schedule clips the terminal sigma v-pred needs for true blacks. Judge Acheron on night blacks specifically.",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "prompt": "masterpiece, best quality, very aesthetic, absurdres, highres, painterly, gradient hair, gradient eyes, sparkling eyes, eyelashes, shiny skin, glint, sparkle, glowing, depth of field, blurry background, light rays",
+        "sampler": "dpmpp_2m",
+        "scheduler": "karras",
+        "cfg": 5.5
+      }
+    },
+    {
+      "label": "acheron-s1",
+      "note": "refinement A/B, seed 1234. Refined finish scaffold + noobai lineage sampler (euler/normal/cfg 5.0). Compare against acheron-a (same seed, round-3 scaffold) to isolate the tag change.",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "prompt": "masterpiece, best quality, very aesthetic, absurdres, highres, painterly, gradient hair, gradient eyes, sparkling eyes, eyelashes, shiny skin, glint, sparkle, glowing, depth of field, blurry background, purple theme"
+      }
+    },
+    {
+      "label": "acheron-s2",
+      "note": "refinement A/B, seed 1234. Same refined scaffold as acheron-s1 but the docs/tuning.md official-art finish recipe (dpmpp_2m/karras/cfg 5.5) — the long-deferred test of whether a karras schedule clips the terminal sigma v-pred needs for true blacks. Judge Acheron on night blacks specifically.",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "prompt": "masterpiece, best quality, very aesthetic, absurdres, highres, painterly, gradient hair, gradient eyes, sparkling eyes, eyelashes, shiny skin, glint, sparkle, glowing, depth of field, blurry background, purple theme",
+        "sampler": "dpmpp_2m",
+        "scheduler": "karras",
+        "cfg": 5.5
+      }
+    },
+    {
+      "label": "jean-r1",
+      "note": "round 5, seed 1234: refined scaffold + 34 steps + character-fidelity negatives (anatomy guards + alternate-costume suppression), LoRA @ 0.7. Baseline weight — compare to -s1 for the steps/negative delta.",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, light rays, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "loras": [
+          {
+            "name": "honkai star rail_v3.safetensors",
+            "strength": 0.7
+          }
+        ]
+      }
+    },
+    {
+      "label": "jean-r2",
+      "note": "round 5, seed 1234: refined scaffold + 34 steps + character-fidelity negatives (anatomy guards + alternate-costume suppression), LoRA @ 0.8. Settles the long-pending -w08 ablation at the refined config: does more style weight sharpen the miHoYo hand, or resurface the v3 grunge flaw?",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, light rays, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "loras": [
+          {
+            "name": "honkai star rail_v3.safetensors",
+            "strength": 0.8
+          }
+        ]
+      }
+    },
+    {
+      "label": "acheron-r1",
+      "note": "round 5, seed 1234: refined scaffold + 34 steps + character-fidelity negatives (anatomy guards + alternate-costume suppression), LoRA @ 0.7. Baseline weight — compare to -s1 for the steps/negative delta.",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot, purple theme",
+      "overrides": {
+        "seed": 1234,
+        "loras": [
+          {
+            "name": "honkai star rail_v3.safetensors",
+            "strength": 0.7
+          }
+        ]
+      }
+    },
+    {
+      "label": "acheron-r2",
+      "note": "round 5, seed 1234: refined scaffold + 34 steps + character-fidelity negatives (anatomy guards + alternate-costume suppression), LoRA @ 0.8. Settles the long-pending -w08 ablation at the refined config: does more style weight sharpen the miHoYo hand, or resurface the v3 grunge flaw?",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot, purple theme",
+      "overrides": {
+        "seed": 1234,
+        "loras": [
+          {
+            "name": "honkai star rail_v3.safetensors",
+            "strength": 0.8
+          }
+        ]
+      }
+    },
+    {
+      "label": "jean-c45",
+      "note": "round 6, seed 1234: cfg_rescale 0.45 against the 0.55 lineage default (compare to jean-s1/-r2 at same seed). LoRA 0.8, 28 steps, refined scaffold + fidelity negatives. Lower rescale = more colour energy and contrast; watch for burn on Jean's highlights.",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, light rays, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "cfg_rescale": 0.45
+      }
+    },
+    {
+      "label": "jean-c70",
+      "note": "round 6, seed 1234: cfg_rescale 0.7 against the 0.55 lineage default (compare to jean-s1/-r2 at same seed). LoRA 0.8, 28 steps, refined scaffold + fidelity negatives. Higher rescale = softer, smoother tonal roll-off; watch for flatness and greyed blacks on Acheron's night.",
+      "character": "jean (genshin impact), 1girl, mature female, blonde hair, ponytail, hair between eyes, blue eyes, pale skin, strapless, detached sleeves, white pants, gloves",
+      "scene": "tying hair, arms up, kneeling, three-quarter view, looking at viewer, outdoors, day, sunlight, sunbeam, dappled sunlight, lens flare, light rays, grass, field, blue sky, wind, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "cfg_rescale": 0.7
+      }
+    },
+    {
+      "label": "acheron-c45",
+      "note": "round 6, seed 1234: cfg_rescale 0.45 against the 0.55 lineage default (compare to acheron-s1/-r2 at same seed). LoRA 0.8, 28 steps, refined scaffold + fidelity negatives. Lower rescale = more colour energy and contrast; watch for burn on Jean's highlights.",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot, purple theme",
+      "overrides": {
+        "seed": 1234,
+        "cfg_rescale": 0.45
+      }
+    },
+    {
+      "label": "acheron-c70",
+      "note": "round 6, seed 1234: cfg_rescale 0.7 against the 0.55 lineage default (compare to acheron-s1/-r2 at same seed). LoRA 0.8, 28 steps, refined scaffold + fidelity negatives. Higher rescale = softer, smoother tonal roll-off; watch for flatness and greyed blacks on Acheron's night.",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot, purple theme",
+      "overrides": {
+        "seed": 1234,
+        "cfg_rescale": 0.7
+      }
+    },
+    {
+      "label": "acheron-c45b",
+      "note": "round 6 keeper: winning config (cfg_rescale 0.45, LoRA 0.8, 28 steps), fresh seed 7777.",
+      "character": "acheron (honkai: star rail), 1girl, mature female, very long hair, purple hair, streaked hair, multicolored hair, purple eyes, hair over one eye, flower-shaped pupils",
+      "scene": "holding umbrella, oil-paper umbrella, standing, three-quarter view, looking at viewer, night, moonlight, full moon, dark, outdoors, cowboy shot, purple theme",
+      "overrides": {
+        "seed": 7777
+      }
+    },
+    {
+      "label": "herta-lora",
+      "note": "The Herta is POST-CUTOFF (HSR 3.0, Jan 2025 > NoobAI 2024-10-23), so tag identity alone cannot work. This arm keeps the full style recipe (HSR v3 LoRA @ 0.8) and leans on core's anchor path + explicit canonical design tags for identity. auto_reference OFF because core refuses LoRA+reference (api.go:380).",
+      "character": "the herta (honkai: star rail), 1girl, solo, witch hat, black headwear, hat flower, very long hair, multicolored hair, brown hair, purple eyes, ahoge, sidelocks, hair ribbon, purple ribbon, pale skin, black dress, corset, strapless, bare shoulders, frills, white sleeves, detached sleeves, black gloves, key necklace, jewelry",
+      "scene": "sitting, crossed legs, holding cup, teacup, tea, saucer, smile, closed mouth, window, balcony, curtains, railing, indoors, day, sunlight, light rays, dappled sunlight, table, three-quarter view, looking at viewer, cowboy shot",
+      "overrides": {
+        "seed": 1234
+      }
+    },
+    {
+      "label": "herta-ref",
+      "note": "The other side of the api.go:380 constraint: drop the LoRA so auto_reference can attach the consensus Danbooru exemplar for identity. Trades style strength for identity fidelity — the direct measurement of what the LoRA contributes vs what a reference contributes on a post-cutoff character.",
+      "character": "the herta (honkai: star rail), 1girl, solo, witch hat, black headwear, hat flower, very long hair, multicolored hair, brown hair, purple eyes, ahoge, sidelocks, hair ribbon, purple ribbon, pale skin, black dress, corset, strapless, bare shoulders, frills, white sleeves, detached sleeves, black gloves, key necklace, jewelry",
+      "scene": "sitting, crossed legs, holding cup, teacup, tea, saucer, smile, closed mouth, window, balcony, curtains, railing, indoors, day, sunlight, light rays, dappled sunlight, table, three-quarter view, looking at viewer, cowboy shot",
+      "overrides": {
+        "seed": 1234,
+        "loras": [],
+        "auto_reference": true
+      }
+    },
+    {
+      "label": "himeko-1234",
+      "note": "In-model HSR launch character — tag-only identity, no reference needed (contrast herta-*). Winning config, seed 1234. Lean character string by design: the tag carries the costume.",
+      "character": "himeko (honkai: star rail), 1girl, solo, mature female, red hair, very long hair, wavy hair, yellow eyes, mole under eye, large breasts",
+      "scene": "sitting, crossed legs, holding cup, teacup, tea, saucer, smile, closed mouth, window, balcony, curtains, railing, indoors, day, sunlight, light rays, dappled sunlight, table, three-quarter view, looking at viewer, cowboy shot",
+      "overrides": {
+        "seed": 1234
+      }
+    },
+    {
+      "label": "himeko-7777",
+      "note": "In-model HSR launch character — tag-only identity, no reference needed (contrast herta-*). Winning config, seed 7777. Lean character string by design: the tag carries the costume.",
+      "character": "himeko (honkai: star rail), 1girl, solo, mature female, red hair, very long hair, wavy hair, yellow eyes, mole under eye, large breasts",
+      "scene": "sitting, crossed legs, holding cup, teacup, tea, saucer, smile, closed mouth, window, balcony, curtains, railing, indoors, day, sunlight, light rays, dappled sunlight, table, three-quarter view, looking at viewer, cowboy shot",
+      "overrides": {
+        "seed": 7777
+      }
+    }
+  ],
+  "notes": "Prompt merge order: style carriers (official art, game cg) -> character -> scene -> quality scaffold. GROUNDING AUDIT 2026-08-05: 7 of 9 original style tags were MISS in the tag DB ('HD', 'detailed', 'detailed color', 'smooth color', 'smooth shading', 'soft shading', 'faint glow'); 'reflective eyes' aliases to eye_reflection at 1.6k posts. Dead tags dilute attention -- CLAUDE.md #4. REFINEMENT ROUND 2026-08-09 (current base): second grounding sweep for smooth coloration / lighting / reflection / shading. Winners, all grounded: gradient hair (216k) + gradient eyes (12.7k) for smooth colour transitions, glint (37k) + shiny skin (154k) for specular/reflection, sparkle (224k) replacing light particles (79k), painterly (10k) + blurry background (181k) for painterly separation, and purple theme (13.5k) on Acheron for palette harmony. Confirmed MISS -- do not reach for these again: cel shading, soft lighting, dramatic lighting, rim light, gradient, smooth, specular highlights, ambient occlusion, digital painting, vivid colors, detailed background, glossy. SAMPLER A/B RESOLVED 2026-08-09: the docs/tuning.md 'official-art finish' recipe (dpmpp_2m/karras/cfg 5.5) DOES NOT TRANSFER to the noobai v-pred lineage -- it washed Acheron's night sky from deep blue-black to lavender haze and blew Jean's highlights. The karras sigma schedule clips the terminal sigma that v-pred + ZTSNR relies on for true blacks. That recipe is eps-lineage guidance (CLAUDE.md #3: settings don't transfer between lineages). Keep euler/normal/cfg 5.0. Evidence: out/{jean,acheron}-s2.png vs -s1. backlighting stays OUT: it lifts blacks on night scenes. hires 1.5x/denoise 0.55; scale >1.5 hangs the 17GB Mac. cowboy shot framing is load-bearing for face quality (full body = ~90px face). (logo:1.3) mandatory: the v3 LoRA renders the HSR logo on txt2img."
+}

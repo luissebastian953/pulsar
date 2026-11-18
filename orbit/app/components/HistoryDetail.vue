@@ -51,8 +51,20 @@ const shownUrl = computed(() => {
   return role.value !== 'source' && path ? api.imageUrl(path) : props.imageUrl
 })
 
-const promptTags = computed(() =>
-  (p.value?.prompt ?? '').split(',').map(t => t.trim()).filter(Boolean))
+// displayed from the stored structure (weights shown as emitted); legacy
+// rows without it fall back to the comma split
+const promptTags = computed(() => {
+  const v = p.value
+  if (v?.prompt_tags) return v.prompt_tags.map(t => tagLabel(t))
+
+  return (v?.prompt ?? '').split(',').map(t => t.trim()).filter(Boolean)
+})
+const negativeText = computed(() => {
+  const v = p.value
+  if (v?.negative_tags) return v.negative_tags.map(t => tagLabel(t)).join(', ')
+
+  return v?.negative ?? ''
+})
 
 // labelled config rows, omitting anything the generation didn't use
 const rows = computed(() => {
@@ -75,6 +87,8 @@ const rows = computed(() => {
     { label: 'Schedule', value: v.scheduler },
     { label: 'Lineage', value: v.lineage === 'noobai' ? 'NoobAI · v-pred' : 'Illustrious · eps' },
   )
+
+  if (v.style) out.push({ label: 'Style', value: v.style })
 
   if (v.checkpoint) out.push({ label: 'Base model', value: stripModelExt(v.checkpoint) })
 
@@ -165,12 +179,12 @@ function download() {
               >{{ t.replaceAll('_', ' ') }}</span>
             </div>
 
-            <template v-if="p?.negative?.trim()">
+            <template v-if="negativeText.trim()">
               <div class="section-label mb-1.5 mt-4">
                 Negative
               </div>
               <div class="rounded-ctrl border border-line bg-void px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-faint">
-                {{ p.negative }}
+                {{ negativeText }}
               </div>
             </template>
 

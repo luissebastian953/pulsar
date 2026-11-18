@@ -8,11 +8,73 @@ export type TranslatedTag = {
   count: number
   concept: string
   stage: 'exact' | 'alias' | 'fuzzy' | 'live'
+  // NovelAI-unit weight the source text carried (1 = unweighted; < 0 is
+  // relocated to Undesired Content by core)
+  weight?: number
 }
 
 export type TranslateResult = {
   tags: TranslatedTag[]
   dropped: string[]
+  // the tags in NovelAI syntax, ready to send — orbit never builds syntax
+  prompt?: string
+  notices?: PromptIssue[]
+}
+
+// ── prompt grammar (core/internal/prompt; docs/frontend.md#prompt-validation)
+// Offsets are UTF-16 code units into the surface text (JS string indices);
+// `tag` is the comma/newline piece index.
+export type PromptIssue = {
+  code: string
+  message: string
+  hint?: string
+  start: number
+  end: number
+  tag: number
+}
+
+export type PromptSurface = 'prompt' | 'negative' | 'character'
+
+export type PromptSource
+  = | 'user' | 'safety' | 'default_uc' | 'quality'
+    | 'style_prefix' | 'style_suffix' | 'style_negative' | 'anchor'
+
+export type PromptRun = { text: string, w: number, emitted: number }
+
+// a tag as stored on the job row (assembly.Spec)
+export type PromptTag = {
+  runs: PromptRun[]
+  text: string
+  name: string
+  source: PromptSource
+  nai?: string
+  relocated?: boolean
+}
+
+// a tag from POST /prompt/parse, located in the surface
+export type ParsedTag = {
+  text: string
+  name: string
+  nai: string
+  start: number
+  end: number
+  tag: number
+  runs: PromptRun[]
+  relocated?: boolean
+}
+
+export type PromptParseResult = {
+  tags: ParsedTag[]
+  relocated: ParsedTag[]
+  errors: PromptIssue[]
+  notices: PromptIssue[]
+  emitted: string
+}
+
+// core's 400 for a prompt that failed to parse; `error` is the message
+export type PromptErrorBody = PromptIssue & {
+  error: string
+  field: string
 }
 
 export type TagSuggestion = {
@@ -38,6 +100,33 @@ export type TagLookupResult
 
 export type PoseRole = 'source' | 'lineart' | 'skeleton'
 
+// A style preset row from GET /styles (docs/tuning.md#style-presets). Prompt
+// fields, negative and LoRA merge in core; the settings are the recipe the
+// composer writes into its own fields on selection (request values win in
+// core, so what's shown is what runs). `hires` is a size-tier hint only.
+export type StylePreset = {
+  slug: string
+  lineage: 'illustrious' | 'noobai'
+  name: string
+  description: string
+  family: string
+  lora?: string
+  lora_strength?: number
+  prompt_prefix: string
+  prompt_suffix: string
+  negative: string
+  sampler?: string
+  scheduler?: string
+  cfg?: number
+  steps?: number
+  cfg_rescale?: number
+  hires?: boolean
+  hires_scale?: number
+  hires_denoise?: number
+  // false = the preset's LoRA is not installed on this deployment
+  available: boolean
+}
+
 export type GenerationRequest = {
   kind?: 'txt2img' | 'img2img' | 'inpaint' | 'pose'
   // img2img/inpaint: upload ids from POST /uploads + denoise
@@ -62,6 +151,8 @@ export type GenerationRequest = {
   lineage?: 'illustrious' | 'noobai'
   // v-pred colour-burn rescale (0..1); only meaningful on a v-pred lineage.
   cfg_rescale?: number
+  // style preset slug for this lineage (GET /styles); merged in core
+  style?: string
   prompt: string
   negative?: string
   width?: number
@@ -96,12 +187,16 @@ export type GenerationParams = {
   hires_denoise?: number
   denoise?: number
   loras?: { name: string, strength?: number }[]
-  characters?: { prompt: string, reference_id?: string, ref_strength?: number }[]
+  characters?: { prompt: string, reference_id?: string, ref_strength?: number, tags?: PromptTag[] }[]
   reference_id?: string
   ref_mode?: 'character' | 'style' | 'character_style'
   ref_strength?: number
   ref_fidelity?: number
   quality_tags?: boolean
+  style?: string
+  // structured copies of the emitted strings (absent on legacy rows)
+  prompt_tags?: PromptTag[]
+  negative_tags?: PromptTag[]
 }
 
 export type JobState = 'queued' | 'running' | 'done' | 'failed' | 'blocked'

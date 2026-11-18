@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"pulsar/core/internal/prompt"
 )
 
 // testUC / testForbidden stand in for the DEFAULT_UC / FORBIDDEN_TAG_UC env
@@ -143,6 +145,14 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// the structured copy is asserted below; the scalar fields must match
+	// the historical defaults exactly
+	if len(s.PromptTags) != 4 || s.PromptTags[0].Source != prompt.Quality || s.PromptTags[2].Source != prompt.User ||
+		len(s.NegativeTags) != 6 || s.NegativeTags[0].Source != prompt.Safety || s.NegativeTags[3].Source != prompt.DefaultUC ||
+		s.Calibration == nil || *s.Calibration != lineageSpecs["illustrious"].calibration {
+		t.Errorf("structured tags = %+v / %+v / %+v", s.PromptTags, s.NegativeTags, s.Calibration)
+	}
+	s.PromptTags, s.NegativeTags, s.Calibration = nil, nil, nil
 	want := Spec{
 		Prompt:   testQuality + ", 1girl, silver hair",
 		Negative: testForbidden + ", " + testUC,
@@ -329,5 +339,126 @@ func TestCheckpointIsVpred(t *testing.T) {
 	// the load-bearing property: a vpred marker must win over an eps/family marker
 	if v, known := CheckpointIsVpred("illustrious-vpred-finetune.safetensors"); !v || !known {
 		t.Errorf("vpred marker must win over family marker; got (%v, %v)", v, known)
+	}
+}
+
+func styleOpts(sty *Style) Options {
+	o := opts()
+	o.Lineage = "noobai"
+	o.Style = sty
+	return o
+}
+
+// TestStyleMerge pins the preset merge (docs/tuning.md#style-presets):
+// quality → carriers → user prompt → finish; safety → UC preset → user
+// negative → style negative; the style's LoRA attaches; settings fill only
+// what the request left unset, and hires stays the request's call.
+func TestStyleMerge(t *testing.T) {
+	rescale := 0.45
+	sty := &Style{
+		Slug: "hsr", PromptPrefix: "official art, game cg", PromptSuffix: "painterly, glint",
+		Negative: "(logo:1.3)", Lora: "hsr.safetensors", LoraStrength: 0.8,
+		Sampler: "euler", Scheduler: "normal", CFG: 5, Steps: 30, CFGRescale: &rescale,
+		HiresScale: 1.5, HiresDenoise: 0.55,
+	}
+	s, err := Build(Request{Prompt: "acheron, 1girl", Negative: "blurry", Hires: true}, styleOpts(sty))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := testQuality + ", official art, game cg, acheron, 1girl, painterly, glint"; s.Prompt != want {
+		t.Errorf("prompt = %q, want %q", s.Prompt, want)
+	}
+	if want := testForbidden + ", " + testUC + ", blurry, (logo:1.3)"; s.Negative != want {
+		t.Errorf("negative = %q, want %q", s.Negative, want)
+	}
+	if !strings.HasPrefix(s.Negative, testForbidden) {
+		t.Error("forbidden-tag negative must stay first with a style negative")
+	}
+	if s.Style != "hsr" {
+		t.Errorf("style = %q", s.Style)
+	}
+	if len(s.Loras) != 1 || s.Loras[0].Name != "hsr.safetensors" || *s.Loras[0].Strength != 0.8 {
+		t.Errorf("loras = %+v", s.Loras)
+	}
+	if s.Steps != 30 || s.CFG != 5 || s.CFGRescale != 0.45 || s.HiresScale != 1.5 || s.HiresDenoise != 0.55 {
+		t.Errorf("settings: steps %d cfg %v rescale %v scale %v denoise %v", s.Steps, s.CFG, s.CFGRescale, s.HiresScale, s.HiresDenoise)
+	}
+
+	// request > style > lineage default
+	s, err = Build(Request{Prompt: "1girl", Steps: 20, CFGRescale: fPtr(0.7)}, styleOpts(sty))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Steps != 20 || s.CFGRescale != 0.7 || s.Sampler != "euler" {
+		t.Errorf("request must win: steps %d rescale %v sampler %q", s.Steps, s.CFGRescale, s.Sampler)
+	}
+	// a style never switches hires on, so its hires fill-ins stay inert
+	if s.Hires || s.HiresScale != 0 || s.HiresDenoise != 0 {
+		t.Errorf("hires leaked from style: %v %v %v", s.Hires, s.HiresScale, s.HiresDenoise)
+	}
+
+	// tag-only style: settings come from the lineage, no LoRA, no suffix
+	s, err = Build(Request{Prompt: "1girl"}, styleOpts(&Style{Slug: "chibi", PromptPrefix: "chibi"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Prompt != testQuality+", chibi, 1girl" || s.Steps != 28 || s.CFGRescale != 0.55 || len(s.Loras) != 0 {
+		t.Errorf("tag-only style: prompt %q steps %d rescale %v loras %d", s.Prompt, s.Steps, s.CFGRescale, len(s.Loras))
+	}
+	if s.Negative != testForbidden+", "+testUC {
+		t.Errorf("empty style negative must add nothing: %q", s.Negative)
+	}
+
+	// no style: Spec.Style stays empty and nothing else moves
+	s, err = Build(Request{Prompt: "1girl"}, styleOpts(nil))
+	if err != nil || s.Style != "" || s.Prompt != testQuality+", 1girl" {
+		t.Errorf("nil style: %v %+v", err, s)
+	}
+}
+
+// TestStyleLora: the style's LoRA dedupes against the request's (the
+// request's strength wins), defaults to 0.8, and respects the two-LoRA cap.
+func TestStyleLora(t *testing.T) {
+	sty := &Style{Slug: "hsr", Lora: "hsr.safetensors", LoraStrength: 0.8}
+	s, err := Build(Request{Prompt: "1girl", Loras: []Lora{{Name: "hsr.safetensors", Strength: fPtr(0.6)}}}, styleOpts(sty))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Loras) != 1 || *s.Loras[0].Strength != 0.6 {
+		t.Errorf("dedupe: %+v", s.Loras)
+	}
+	s, err = Build(Request{Prompt: "1girl", Loras: []Lora{{Name: "char.safetensors"}}}, styleOpts(sty))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Loras) != 2 || s.Loras[0].Name != "char.safetensors" || s.Loras[1].Name != "hsr.safetensors" {
+		t.Errorf("style LoRA must chain behind the request's: %+v", s.Loras)
+	}
+	if _, err = Build(Request{Prompt: "1girl", Loras: []Lora{{Name: "a"}, {Name: "b"}}}, styleOpts(sty)); err == nil || !strings.Contains(err.Error(), `style "hsr"`) {
+		t.Errorf("third LoRA via style must be refused naming the style, got %v", err)
+	}
+	s, err = Build(Request{Prompt: "1girl"}, styleOpts(&Style{Slug: "x", Lora: "x.safetensors"}))
+	if err != nil || *s.Loras[0].Strength != 0.8 {
+		t.Errorf("style LoRA default strength: %v %+v", err, s.Loras)
+	}
+}
+
+// TestStyleValidation: a preset's settings pass the same gates as a
+// request's — a bad row is a 400 at request time, never garbage on the GPU.
+func TestStyleValidation(t *testing.T) {
+	bad := []Style{
+		{Slug: "s", Sampler: "ddim"},
+		{Slug: "s", Scheduler: "exponential"},
+		{Slug: "s", CFG: 40},
+		{Slug: "s", Steps: 99},
+		{Slug: "s", CFGRescale: fPtr(1.5)},
+		{Slug: "s", Lora: "x", LoraStrength: 3},
+		{Slug: "s", HiresScale: 3},
+		{Slug: "s", HiresDenoise: 0.9},
+	}
+	for i := range bad {
+		if _, err := Build(Request{Prompt: "1girl", Hires: true}, styleOpts(&bad[i])); err == nil {
+			t.Errorf("style %+v accepted", bad[i])
+		}
 	}
 }

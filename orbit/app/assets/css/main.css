@@ -31,6 +31,8 @@
 
   --color-beam: #E8F4FF;
   --color-warn: #FFB86B;
+  /* validation errors: a prompt the server will refuse (red, not warn-amber) */
+  --color-danger: #FF5A5F;
 
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -74,6 +76,8 @@
   .tag-chip[data-cat="copyright"] { --chip: var(--color-t-copyright); }
   .tag-chip[data-cat="artist"]    { --chip: var(--color-t-artist); }
   .tag-chip[data-cat="meta"]      { --chip: var(--color-t-meta); }
+  /* a chip the prompt parser rejected — red and bold whatever its category */
+  .tag-chip[data-invalid] { --chip: var(--color-danger); font-weight: 700; }
 
   /* Dropped-concept chip — struck through, amber, never swallowed */
   .dropped-chip {
@@ -115,6 +119,11 @@
     letter-spacing: 0.13em;
     text-transform: uppercase;
     color: var(--color-faint);
+  }
+  /* the label of an input whose prompt has an error */
+  .section-label[data-invalid] {
+    color: var(--color-danger);
+    font-weight: 700;
   }
 
   /* Focus ring used across interactive elements */
