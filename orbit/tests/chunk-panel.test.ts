@@ -7,7 +7,7 @@ import ChunkPanelBody from '~/components/ChunkPanelBody.vue'
 import PromptInput from '~/components/PromptInput.vue'
 import TagInput from '~/components/TagInput.vue'
 import { resetChunksForTest, useChunks } from '~/composables/useChunks'
-import { HIGHLIGHT_EMPHASIS_KEY, TAG_SUGGESTIONS_KEY, resetPromptSettingsForTest, usePromptSettings } from '~/composables/usePromptSettings'
+import { DOWNLOAD_METADATA_KEY, HIGHLIGHT_EMPHASIS_KEY, TAG_SUGGESTIONS_KEY, resetPromptSettingsForTest, usePromptSettings } from '~/composables/usePromptSettings'
 import { useToast } from '~/composables/useToast'
 import type { ChunkSpan, ParsedTag, PromptIssue, PromptMark } from '~/types/api'
 import { chunkRanges, emphasisRanges, segmentText } from '~/utils/prompt-issues'
@@ -223,16 +223,23 @@ describe('the chunk panel', () => {
     panel.unmount()
   })
 
-  it('the Settings tab holds the two toggles, each persisted per browser', async () => {
+  it('the Settings tab holds the three toggles, each persisted per browser', async () => {
     localStorage.setItem('pulsar.chunks.tab', 'settings')
     const panel = mountPanel()
     await nextTick()
     const settings = usePromptSettings()
     const off = panel.get('[data-test="setting-disable-suggestions"]')
     const emph = panel.get('[data-test="setting-highlight-emphasis"]')
-    expect(panel.findAll('[role="switch"]')).toHaveLength(2)
+    const clean = panel.get('[data-test="setting-download-clean"]')
+    expect(panel.findAll('[role="switch"]')).toHaveLength(3)
     expect(off.attributes('aria-checked')).toBe('false') // suggestions on by default
     expect(emph.attributes('aria-checked')).toBe('true') // highlight on by default
+    expect(clean.attributes('aria-checked')).toBe('false') // downloads carry metadata by default (D16)
+    expect(settings.downloadMetadata.value).toBe(true)
+    await clean.trigger('click')
+    expect(settings.downloadMetadata.value).toBe(false)
+    expect(localStorage.getItem(DOWNLOAD_METADATA_KEY)).toBe('false')
+    expect(clean.attributes('aria-checked')).toBe('true')
 
     await off.trigger('click')
     await emph.trigger('click')

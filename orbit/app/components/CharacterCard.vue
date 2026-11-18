@@ -119,7 +119,7 @@ async function onRefPick(e: Event) {
         />own reference
         <input
           type="file"
-          accept="image/png,image/jpeg"
+          accept="image/png,image/jpeg,image/webp"
           class="hidden"
           @change="onRefPick"
         >

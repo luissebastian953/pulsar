@@ -112,12 +112,22 @@ func viewTags(ts []prompt.Tag) []tagView2 {
 // exposed here. `chunks` in the request are the prompt chunks the text
 // references; the response locates every resolved reference (`chunks`) and
 // the typed weighting (`marks`, for the emphasis highlight).
+//
+// `"clean": true` is the import path (text written for another tool, read
+// from an image's metadata): prompt.Clean first drops what pulsar's grammar
+// has no place for — `<lora:…>`, `embedding:…`, `|`, `||…||`, control
+// characters — each with a notice located in the ORIGINAL text, then the
+// normal parser runs on the result. The response carries that result as
+// `cleaned`; every other offset (tags, errors, chunks, marks) indexes it.
+// Clean only removes: what is left is validated exactly as typed text is,
+// and still passes CheckPrompt at /generate like any prompt.
 func (s *Server) handlePromptParse(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text    string         `json:"text"`
 		Surface string         `json:"surface"`
 		Lineage string         `json:"lineage"`
 		Chunks  []prompt.Chunk `json:"chunks"`
+		Clean   bool           `json:"clean"`
 	}
 	if !decodeJSON(w, r, 512<<10, &req) {
 		return
@@ -145,7 +155,12 @@ func (s *Server) handlePromptParse(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "unknown lineage "+lineage)
 		return
 	}
-	surf, refs, errs := prompt.AnalyzeWith(req.Text, mode, req.Chunks)
+	text := req.Text
+	var cleanNotes []prompt.Issue
+	if req.Clean {
+		text, cleanNotes = prompt.Clean(text)
+	}
+	surf, refs, errs := prompt.AnalyzeWith(text, mode, req.Chunks)
 	resp := struct {
 		Tags      []tagView2         `json:"tags"`
 		Relocated []tagView2         `json:"relocated"`
@@ -155,8 +170,15 @@ func (s *Server) handlePromptParse(w http.ResponseWriter, r *http.Request) {
 		Marks     []prompt.Mark      `json:"marks"`
 		Emitted   string             `json:"emitted"`
 		Cal       prompt.Calibration `json:"calibration"`
+		// Cleaned is the text that was parsed when the request asked for
+		// clean; absent otherwise.
+		Cleaned *string `json:"cleaned,omitempty"`
 	}{Tags: []tagView2{}, Relocated: []tagView2{}, Errors: []prompt.Issue{}, Notices: []prompt.Issue{},
 		Chunks: viewChunks(refs), Marks: []prompt.Mark{}, Cal: cal}
+	if req.Clean {
+		resp.Cleaned = &text
+		resp.Notices = append(resp.Notices, cleanNotes...)
+	}
 	if len(errs) > 0 {
 		resp.Errors = errs
 		writeJSON(w, http.StatusOK, resp)

@@ -20,21 +20,51 @@ export function parsePulsar(text: string): PulsarParse {
 
   const meta: Partial<PulsarMetaV1> & { v: 1 } = { v: 1 }
 
-  for (const key of ['prompt', 'negative', 'sampler', 'scheduler', 'lineage', 'style', 'kind'] as const) {
+  for (const key of ['prompt', 'negative', 'sampler', 'scheduler', 'lineage', 'style', 'kind', 'model'] as const) {
     const v = str(m[key])
 
     if (v !== undefined) meta[key] = v
   }
 
-  for (const key of ['width', 'height', 'steps', 'cfg', 'rescale', 'seed'] as const) {
+  for (const key of ['width', 'height', 'steps', 'cfg', 'rescale', 'seed', 'denoise', 'hires_scale', 'hires_denoise'] as const) {
     const v = typeof m[key] === 'number' ? num(m[key]) : undefined
 
     if (v !== undefined) meta[key] = v
   }
 
-  if (Array.isArray(m.characters)) meta.characters = m.characters.filter(c => typeof c === 'string').slice(0, 64)
+  const strings = (v: unknown): string[] | undefined =>
+    Array.isArray(v) ? v.filter((c): c is string => typeof c === 'string').slice(0, 64) : undefined
+
+  meta.characters = strings(m.characters)
+
+  if (meta.characters === undefined) delete meta.characters
+
+  const chunks = strings(m.chunks)
+
+  if (chunks?.length) meta.chunks = chunks
+
+  if (Array.isArray(m.loras)) {
+    const loras = m.loras.slice(0, 16).flatMap((l) => {
+      const name = isRecord(l) ? str(l.name) : undefined
+      const strength = isRecord(l) && typeof l.strength === 'number' ? num(l.strength) : undefined
+
+      return name ? [{ name, strength: strength ?? 0 }] : []
+    })
+
+    if (loras.length) meta.loras = loras
+  }
+
+  if (isRecord(m.nai)) {
+    meta.nai = { prompt: str(m.nai.prompt) ?? '', negative: str(m.nai.negative) ?? '', characters: strings(m.nai.characters) ?? [] }
+  }
 
   const extra: Record<string, string> = {}
+
+  if (meta.denoise) extra.denoise = String(meta.denoise)
+
+  if (meta.hires_scale) extra.hires = `×${meta.hires_scale}${meta.hires_denoise ? ` · denoise ${meta.hires_denoise}` : ''}`
+
+  if (meta.chunks) extra.chunks = meta.chunks.join(', ')
 
   if (meta.lineage) extra.lineage = meta.lineage
 
@@ -57,6 +87,8 @@ export function parsePulsar(text: string): PulsarParse {
       seed: meta.seed,
       sampler: meta.sampler,
       scheduler: meta.scheduler,
+      model: meta.model,
+      resources: meta.loras?.map(l => ({ kind: 'lora', name: l.name, weight: l.strength })),
       extra,
       pulsar: meta,
       raw: m,

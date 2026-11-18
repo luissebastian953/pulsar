@@ -1,6 +1,7 @@
 import { useLocalStorage } from '@vueuse/core'
 import { effectScope, nextTick } from 'vue'
 import type { GenerationParams } from '~/types/api'
+import type { MetaImport } from '~/utils/meta-import'
 import { userTagTexts } from '~/utils/prompt-issues'
 
 // A stored image: its bytes live in IndexedDB under `blob` (see useBlobStore);
@@ -224,4 +225,14 @@ export function paramsToPresetConfig(p: GenerationParams): PresetConfig {
 // to apply, navigates to /create, and the composer consumes + clears it.
 export function usePendingConfig() {
   return useState<PresetConfig | null>('pulsar:pending-config', () => null)
+}
+
+// usePendingImport is the hand-off from the image inspector's import dialog:
+// a PARTIAL patch (prompt, Undesired Content, characters, and optionally
+// size/steps/seed and an image to upload) that the composer applies on top
+// of whatever it holds. It is not a PresetConfig on purpose — a full config
+// would reset every setting the import must leave alone
+// (docs/frontend.md#image-inspector).
+export function usePendingImport() {
+  return useState<MetaImport | null>('pulsar:pending-import', () => null)
 }

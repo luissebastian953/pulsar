@@ -6,6 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.57.0
 	github.com/coder/websocket v1.8.15
 	github.com/jackc/pgx/v5 v5.10.0
+	golang.org/x/image v0.44.0
 )
 
 require (
@@ -22,7 +23,6 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
-	golang.org/x/image v0.44.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 )

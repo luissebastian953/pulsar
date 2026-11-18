@@ -175,6 +175,7 @@ beat — rotate the beam or pulse the ring opacity. It's the name's payoff.
 | `/pose` | pose references — spec'd |
 | `/manga` | phase 7 |
 | `/history` | gallery |
+| `/inspect` | image inspector — read the generation metadata of a PNG / JPEG / WebP, import it into `/create` ([below](#image-inspector)) |
 | `/login` | age-gate lives here (see `docs/compliance.md`) |
 
 Both `/create` and `/pose` share the same shell: header, composer rail, stage. Only
@@ -280,9 +281,61 @@ the composer differs.
   `0.2 + 0.4·clamp(|w−1|)` (nothing within 0.01 of 1), `--color-emph-op` at
   0.5 for operators; in tags mode the chip is tinted. Marks arrive with the
   debounced parse and are absent while the surface has a parse error.
+- `pulsar.settings.downloadMetadata` (on by default; "Download clean" in the
+  Settings tab and beside the history modal's Download button turns it off).
+  On: downloads fetch `/images/{id}?meta=1` and carry the prompt and settings
+  (`utils/download.ts` `downloadUrl`, used by `HistoryDetail` and
+  `useHistoryPage`). Off: the plain URL, whose only metadata is the
+  AI-generated mark core adds to every served image. What is and is not
+  written: docs/compliance.md#output-metadata.
 - `useChunks` and `usePromptSettings` are page-wide singletons in a detached
   effect scope: they must keep persisting after the component that first
   asked for them unmounts.
+
+<a id="image-inspector"></a>
+**Image inspector** (`/inspect`, and drop-onto-`/create`)
+- `pages/inspect.vue`: drop (`useDropZone`), pick (`useFileDialog`) or paste a
+  PNG, JPEG or WebP. The file is parsed by `useImageMeta` in a **Web Worker**
+  (`workers/imgmeta.worker.ts`, terminated on result, timeout or supersede) —
+  never on the main thread, and never uploaded: there is no core endpoint
+  that accepts an image just to read it (one ingest path).
+- `MetaView` renders the result. Header: generator, Software, model/Source.
+  **"Signed by NovelAI ✓" appears only when the signature result is `valid`;
+  every other outcome shows nothing.** A Simplified / Raw toggle is persisted
+  in `pulsar.inspect.raw`; Raw lists every metadata entry with its key and
+  container. Readers: NovelAI (PNG text, WebP EXIF, stealth alpha), A1111 /
+  Forge, ComfyUI, SwarmUI, InvokeAI, pulsar (`utils/imgmeta/`).
+- **Every string from a file is untrusted.** It is rendered with `{{ }}` only
+  — no `v-html`, no auto-linking, never as a URL or a path — with control and
+  bidi characters made visible (`escapeControlChars`). The app holds a bearer
+  token; `tests/meta-view.test.ts` pins that HTML/script payloads create no
+  element.
+- `MetaImportDialog` ("What do you want to do with this image?") is the one
+  import dialog, opened from `/inspect` and by dropping an image on `/create`.
+  Defaults: **prompt, Undesired Content and characters on; settings and seed
+  off.** "Settings" is a bucket-snapped size and steps only — guidance,
+  sampler, schedule and rescale are never imported (settings don't transfer
+  between lineages), and the patch type (`MetaImport`) has no field for them.
+- Import logic is `utils/meta-import.ts` (`buildMetaImport`). Orbit owns no
+  grammar: every text goes through `POST /prompt/parse` with `clean: true`,
+  which drops `<lora:…>`, `embedding:…`, `|` and `||…||` with notices, and
+  the result is built from `tags[].nai` and `relocated`. On top of that:
+  NovelAI `actual_prompts` are preferred; NovelAI's automatic quality suffix
+  and UC preset are stripped when `tag_hint_qt` / `tag_hint_uc_preset` say
+  they were added (tables hold only values seen in real metadata); character
+  UCs are merged into the main UC with a notice; negative-weight tags move to
+  the UC; a pulsar download imports its `nai` text (weights as typed). Local
+  prompt chunks are put back only where a whole-tag run equals a chunk of at
+  least two tags, with a notice — never by substring. Text core cannot parse
+  is imported as written, so the editor's live validation marks it.
+- The result is a **partial** patch handed over with `usePendingImport()`
+  (not `usePendingConfig()`: a full config would reset every setting the
+  import must leave alone); `useCreateComposer.applyImport` writes only the
+  fields it carries. "Use as base image / reference" hands the `File` to the
+  composer, which uploads it through `useImageUpload().upload` — the normal
+  `POST /uploads` path, `CheckUpload` included. Uploads accept WebP too.
+- Imported text is ordinary editor text: validated live, and checked by
+  `CheckPrompt` at `/generate` like anything typed.
 
 **Stage**
 - `Canvas` (aspect-matched, empty/progress/result states) · `ProgressBar` (SSE) ·
@@ -291,6 +344,9 @@ the composer differs.
 
 **Chrome**
 - `Header` (animated mark, nav, model chip, credits) · `Toast` · `AgeGate`
+- Navigation is Create · Pose · History · Inspect, in the header (desktop)
+  and `base/TabBar` (mobile). Four tabs are 90 px each at a 360 px viewport;
+  a fifth needs a re-check.
 
 ---
 

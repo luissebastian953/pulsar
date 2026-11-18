@@ -1,5 +1,6 @@
 import type { GenerationRequest, PromptIssue, StylePreset, TranslatedTag } from '~/types/api'
-import { blobKeys, usePendingConfig, type Preset, type PresetConfig } from '~/composables/usePresets'
+import { blobKeys, usePendingConfig, usePendingImport, type Preset, type PresetConfig } from '~/composables/usePresets'
+import { applyMetaImport, type MetaImport } from '~/utils/meta-import'
 import { chipsWithIssues } from '~/utils/prompt-issues'
 
 // The whole /create composer: state, lineage rules, uploads, generation, and
@@ -578,6 +579,40 @@ export function useCreateComposer() {
 
     pendingConfig.value = null
     await applyConfig(c)
+  }, { immediate: true })
+
+  // ── import from an inspected image (docs/frontend.md#image-inspector) ──
+  // A partial patch: only what the dialog's toggles asked for is written,
+  // and never guidance, sampler, schedule or rescale. The text lands in the
+  // normal editor fields, so it is validated live and checked at /generate
+  // like anything typed. Images go through the one upload path.
+  async function applyImport(p: MetaImport) {
+    applyMetaImport({ mode, tagList, und, chars, aspect, steps, seedText }, p)
+
+    if (p.und !== undefined) folds.und = !!und.value.trim()
+
+    if (p.chars !== undefined) folds.chars = chars.value.length > 0
+
+    if (p.steps !== undefined || p.seedText !== undefined) folds.adv = true
+
+    if (p.baseImage) {
+      maskId.value = ''
+      folds.i2i = true
+      await i2i.upload(p.baseImage)
+    }
+
+    if (p.reference) {
+      folds.ref = true
+      await charRef.upload(p.reference)
+    }
+  }
+
+  const pendingImport = usePendingImport()
+  watch(pendingImport, async (p) => {
+    if (!p) return
+
+    pendingImport.value = null
+    await applyImport(p)
   }, { immediate: true })
 
   // ── prompt chunks: the live fields a rename or a bake rewrites ─────

@@ -26,6 +26,7 @@ const emit = defineEmits<Emits>()
 const open = defineModel<boolean>('open', { required: true })
 
 const api = useApi()
+const settings = usePromptSettings()
 const p = computed(() => props.job?.params)
 
 // multi-output kinds (pose): the primary is `imageUrl`, extractions come from
@@ -103,10 +104,17 @@ const rows = computed(() => {
   return out
 })
 
+// "Download clean" (Settings): without metadata the file keeps only the
+// AI-generated mark; with it, the prompt and settings ride along
+const clean = computed({
+  get: () => !settings.downloadMetadata.value,
+  set: (v: boolean) => { settings.downloadMetadata.value = !v },
+})
+
 // network/CORS failure is swallowed — the browser tab fallback stays available
 function download() {
   const suffix = role.value !== 'source' ? `-${role.value}` : ''
-  downloadImage(shownUrl.value, `pulsar-${p.value?.seed ?? 'image'}${suffix}.png`)
+  downloadImage(downloadUrl(shownUrl.value, settings.downloadMetadata.value), `pulsar-${p.value?.seed ?? 'image'}${suffix}.png`)
 }
 </script>
 
@@ -143,14 +151,28 @@ function download() {
             class="absolute bottom-6 left-6 w-auto"
             :options="roleOptions"
           />
-          <BaseButton
-            class="absolute bottom-6 right-6 bg-surface/90 backdrop-blur"
-            variant="outline"
-            icon="lucide:download"
-            @click="download"
-          >
-            Download
-          </BaseButton>
+          <div class="absolute bottom-6 right-6 flex items-center gap-2">
+            <label
+              class="flex cursor-pointer items-center gap-2 rounded-ctrl border border-line bg-surface/90 px-2.5 py-1.5 text-xs text-dim backdrop-blur"
+              title="Download clean: leave the prompt and settings out of the file. The AI-generated mark always stays."
+            >
+              <BaseToggleSwitch
+                v-model="clean"
+                data-test="download-clean"
+              />
+              Clean
+            </label>
+            <BaseButton
+              class="bg-surface/90 backdrop-blur"
+              variant="outline"
+              icon="lucide:download"
+              :title="clean ? 'Download without prompt metadata' : 'Download with the prompt and settings embedded'"
+              data-test="download"
+              @click="download"
+            >
+              Download
+            </BaseButton>
+          </div>
         </div>
 
         <!-- config -->

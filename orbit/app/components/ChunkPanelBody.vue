@@ -19,7 +19,8 @@ import { chunksIn, sortedCategories, type ChunkCategory, type PromptChunk } from
 //   · Prompt Chunks — Uncategorized first, then the categories. Click a chip
 //     to insert its token at the last-focused prompt field's caret; ✎ edits;
 //     drag (or Alt+←/→ on a focused chip) reorders.
-//   · Settings — "Disable Tag Suggestions" and "Highlight Emphasis".
+//   · Settings — "Disable Tag Suggestions", "Highlight Emphasis" and
+//     "Download clean".
 const store = useChunks()
 const settings = usePromptSettings()
 const chunkApi = useChunkApi()
@@ -157,6 +158,11 @@ const EMPH_SAMPLES = [
 const suggestionsOff = computed({
   get: () => !settings.tagSuggestions.value,
   set: (off: boolean) => { settings.tagSuggestions.value = !off },
+})
+
+const downloadClean = computed({
+  get: () => !settings.downloadMetadata.value,
+  set: (clean: boolean) => { settings.downloadMetadata.value = !clean },
 })
 </script>
 
@@ -441,8 +447,18 @@ const suggestionsOff = computed({
           data-test="setting-highlight-emphasis"
         />
       </label>
+      <label class="flex cursor-pointer items-center gap-3">
+        <span class="flex-1">
+          <span class="block text-[12.5px] text-text">Download clean</span>
+          <span class="block text-2xs leading-relaxed text-faint">Leave your prompt and settings out of downloaded images. Every image still carries the AI-generated mark.</span>
+        </span>
+        <BaseToggleSwitch
+          v-model="downloadClean"
+          data-test="setting-download-clean"
+        />
+      </label>
       <div class="text-2xs leading-relaxed text-faint">
-        Both settings are kept in this browser.
+        These settings are kept in this browser.
       </div>
     </TabsContent>
 

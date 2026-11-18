@@ -10,10 +10,13 @@
 package pngmeta
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -140,4 +143,52 @@ func appendChunk(dst []byte, c Chunk) []byte {
 	dst = append(dst, c.Type...)
 	dst = append(dst, c.Data...)
 	return binary.BigEndian.AppendUint32(dst, crc32.ChecksumIEEE(dst[start:]))
+}
+
+// ITXt builds an uncompressed iTXt chunk: keyword NUL 0 0 NUL NUL text
+// (no language tag, no translated keyword). The keyword follows the PNG
+// rules — 1–79 printable Latin-1 bytes, no leading, trailing or doubled
+// space; the text must be valid UTF-8 without NUL. It is the only way this
+// package lets text back into a delivered file: pass the result to Rewrite.
+func ITXt(keyword, text string) (Chunk, error) {
+	if n := len(keyword); n < 1 || n > 79 || keyword[0] == ' ' || keyword[n-1] == ' ' || strings.Contains(keyword, "  ") {
+		return Chunk{}, fmt.Errorf("pngmeta: bad iTXt keyword %q", keyword)
+	}
+	for i := 0; i < len(keyword); i++ {
+		if b := keyword[i]; b < 0x20 || b > 0x7e {
+			// ASCII only: Latin-1 high bytes are legal PNG but nothing here needs them
+			return Chunk{}, fmt.Errorf("pngmeta: bad iTXt keyword %q", keyword)
+		}
+	}
+	if !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
+		return Chunk{}, fmt.Errorf("pngmeta: iTXt text for %q is not NUL-free UTF-8", keyword)
+	}
+	data := make([]byte, 0, len(keyword)+5+len(text))
+	data = append(data, keyword...)
+	data = append(data, 0, 0, 0, 0, 0) // keyword NUL, compression flag, method, language NUL, translated NUL
+	data = append(data, text...)
+	return Chunk{Type: "iTXt", Data: data}, nil
+}
+
+// ITXtText reads back an uncompressed iTXt chunk written by ITXt. ok is
+// false for any other chunk, a compressed one, or a malformed one.
+func ITXtText(c Chunk) (keyword, text string, ok bool) {
+	if c.Type != "iTXt" {
+		return "", "", false
+	}
+	k := bytes.IndexByte(c.Data, 0)
+	if k < 1 || len(c.Data) < k+3 || c.Data[k+1] != 0 {
+		return "", "", false
+	}
+	rest := c.Data[k+3:]
+	l := bytes.IndexByte(rest, 0)
+	if l < 0 {
+		return "", "", false
+	}
+	rest = rest[l+1:]
+	t := bytes.IndexByte(rest, 0)
+	if t < 0 {
+		return "", "", false
+	}
+	return string(c.Data[:k]), string(rest[t+1:]), true
 }
