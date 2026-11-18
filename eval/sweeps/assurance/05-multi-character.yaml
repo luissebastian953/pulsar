@@ -1,0 +1,105 @@
+# Capability 5 — several characters, creatures, NPC crowds. Regional cases
+# put each character in its own column (core's masks.Columns); `regions`
+# lists the tags each column must show, and the harness scores per-column
+# recall plus cross-bleed (the other column's hair/eye colours showing up).
+# Counts need dghs-imgutils. Pass hypotheses (README): per-region recall
+# ≥ 0.75, bleed ≤ 0.20, count exact-rate ≥ 0.85; creature presence ≥ 0.80;
+# interactions by rubric ≥ 0.60 (NovelAI: "not always reliable").
+# NovelAI's V5 ceiling is 22 characters (vendor), 6–8 reported independently;
+# this stack's regional path is 2–3, so count-stress cases are report-only.
+name: assurance-multi-character
+seeds: [7, 42, 1234, 7777, 3, 11, 21, 88, 101, 202, 303, 404, 505, 606, 707, 808]
+params:
+  lineage: noobai
+  checkpoint: noobai-xl-vpred.safetensors
+  auto_reference: false
+columns: 8
+cases:
+  # --- NovelAI's documented two-girl factory scene, mapped to two regions
+  - name: factory-2girls
+    prompt: "2girls, indoors, factory, night, fog, industrial lights, pipes, light particles, cardboard box"
+    request:
+      characters:
+        - { prompt: "1girl, purple eyes, short hair, smile, open mouth, red blouse, pleated skirt, blonde hair, green scarf, hands on own hips, blunt bangs, blue skirt, bob cut, long sleeves, red nails, fang, cowboy shot" }
+        - { prompt: "1girl, very long hair, purple hair, curly hair, white pants, green eyes, turtleneck, sleeveless, side braid, blush, purple nails, open mouth, pointing, cowboy shot" }
+    expect: [2girls, indoors, night, fog]       # factory is outside the tagger vocabulary
+    regions:
+      - [blonde hair, purple eyes, green scarf, short hair, bob cut, blouse]
+      - [purple hair, green eyes, side braid, very long hair, turtleneck]
+    expect_persons: 2
+  - name: 2girls-1boy
+    prompt: "2girls, 1boy, outdoors, park, day, standing, side by side"
+    request:
+      characters:
+        - { prompt: "1girl, blonde hair, blue eyes, red dress" }
+        - { prompt: "1boy, black hair, brown eyes, white shirt, necktie" }
+        - { prompt: "1girl, pink hair, green eyes, blue sailor collar, school uniform" }
+    expect: [2girls, 1boy, park]
+    regions:
+      - [blonde hair, blue eyes, red dress]
+      - [1boy, black hair, white shirt, necktie]
+      - [pink hair, green eyes, school uniform]
+    expect_persons: 3
+  # --- character + creature: two arms, creature in the global prompt vs in its own region
+  - name: dragon-global
+    prompt: "1girl, solo, riding, dragon, fantasy, outdoors, sky, cloud, grey hair, armor"
+    expect: [1girl, riding, dragon, sky, grey hair, armor]
+    expect_persons: 1
+  - name: dragon-region
+    prompt: "fantasy, outdoors, sky, cloud"
+    request:
+      characters:
+        - { prompt: "1girl, grey hair, armor, riding" }
+        - { prompt: "dragon, wings, scales, no humans" }
+    expect: [dragon, sky]
+    regions:
+      - [1girl, grey hair, armor]
+      - [dragon, wings]
+    expect_persons: 1
+  - name: cat-on-shoulder
+    prompt: "1girl, solo, cat, animal on shoulder, smile, outdoors, day, brown hair, sweater"
+    expect: [1girl, cat, animal on shoulder, brown hair, sweater]
+    expect_persons: 1
+  - name: monster-behind
+    prompt: "1girl, solo, monster, horror (theme), dark, looking at viewer, scared, hallway, black hair"
+    expect: [1girl, monster, horror (theme), dark, scared, black hair]
+    expect_persons: 1
+  # --- focus character + NPC crowd
+  - name: crowd
+    prompt: "1girl, solo focus, crowd, faceless, blurry background, city street, day, red hair, looking at viewer, upper body"
+    expect: [1girl, solo focus, crowd, blurry background, street, red hair]
+    min_persons: 3
+  # --- interaction binding (no source#/target# syntax here: the action tag lives in the actor's region)
+  - name: hug
+    prompt: "2girls, outdoors, park, day"
+    request:
+      characters:
+        - { prompt: "1girl, blonde hair, blue eyes, hug" }   # action tag in the actor's region only
+        - { prompt: "1girl, black hair, red eyes" }
+    expect: [2girls, hug]
+    regions:
+      - [blonde hair, blue eyes]
+      - [black hair, red eyes]
+    expect_persons: 2
+  - name: holding-hands
+    prompt: "2girls, holding hands, outdoors, beach, sunset, side by side"
+    request:
+      characters:
+        - { prompt: "1girl, blonde hair, white dress" }
+        - { prompt: "1girl, black hair, blue dress" }
+    expect: [2girls, holding hands, beach]
+    regions:
+      - [blonde hair, white dress]
+      - [black hair, blue dress]
+    expect_persons: 2
+  # --- count stress beyond the 3-region limit (global prompt only): quantifies the gap to V5
+  - name: count-4girls
+    prompt: "4girls, multiple girls, school uniform, classroom, standing, looking at viewer"
+    expect: [4girls, multiple girls, school uniform]
+    expect_persons: 4
+    report_only: true
+  - name: count-6girls
+    prompt: "6+girls, multiple girls, school uniform, classroom, standing, looking at viewer"
+    expect: [6+girls, multiple girls, school uniform]
+    expect_persons: 6
+    report_only: true

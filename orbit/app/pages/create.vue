@@ -8,10 +8,12 @@ const { public: { modelName } } = useRuntimeConfig()
 
 const {
   prompt, mode, tagList, und, chars, translate, stripTags, charBadge,
+  promptErrors, promptMarks, promptNotices, invalidChips, undErrors, undNotices, charServerErrors, charInvalid, charsInvalid,
   aspect, batch, sizeTier, dims,
   lineage, cfgRescale, checkpoints, activeCheckpoint, steps, guidance,
   seedText, sampler, scheduler, qualityTags, faceDetail,
   loras, loraName, loraStrength, lora2Name, lora2Strength,
+  stylesForLineage, styleSlug, activeStyle, styleHasLora,
   charRef, charRefMode, charRefStrength, charRefFidelity, poseRef, refStrength,
   i2i, i2iStrength, maskId, maskEditing, onI2iPick, onMaskSave, clearI2i,
   folds,
@@ -31,7 +33,10 @@ const saveOpen = ref(false)
     <!-- composer rail -->
     <aside class="order-3 flex flex-none flex-col bg-surface md:order-1 md:h-full md:w-[372px] md:min-h-0 md:border-r md:border-line">
       <div class="min-h-0 p-4 md:flex-1 md:overflow-y-auto">
-        <BaseSectionLabel class="mb-2.5">
+        <BaseSectionLabel
+          class="mb-2.5"
+          :invalid="promptErrors.length > 0"
+        >
           Describe
         </BaseSectionLabel>
         <BaseInput
@@ -40,10 +45,18 @@ const saveOpen = ref(false)
           type="textarea"
           size="large"
           placeholder="a silver-haired girl in a school uniform, looking back at sunset…"
+          :invalid="promptErrors.length > 0"
+          :highlights="promptMarks"
         />
         <TagInput
           v-else
           v-model="tagList"
+          :invalid="promptErrors.length > 0"
+          :invalid-chips="invalidChips"
+        />
+        <PromptIssues
+          :errors="promptErrors"
+          :notices="promptNotices"
         />
         <BaseSegment
           v-model="mode"
@@ -62,10 +75,27 @@ const saveOpen = ref(false)
         />
 
         <BaseFold
+          v-model="folds.style"
+          label="Style"
+          :badge="activeStyle ? activeStyle.name : 'none'"
+          class="mt-3.5"
+        >
+          <StylePicker
+            v-model="styleSlug"
+            :styles="stylesForLineage"
+          />
+          <div class="mt-2 text-[11.5px] leading-relaxed text-faint">
+            A style adds its tags, negatives and LoRA on the server and sets the
+            sampler recipe under Advanced. Your own tags still lead the subject.
+            Styles with a LoRA can't combine with references or multiple characters yet.
+          </div>
+        </BaseFold>
+
+        <BaseFold
           v-model="folds.und"
           label="Undesired content"
-          :badge="und.trim() ? 'custom' : 'none'"
-          class="mt-3.5"
+          :badge="undErrors.length ? 'error' : (und.trim() ? 'custom' : 'none')"
+          :invalid="undErrors.length > 0"
         >
           <BaseInput
             v-model="und"
@@ -73,6 +103,12 @@ const saveOpen = ref(false)
             size="small"
             placeholder="lowres, extra fingers, watermark…"
             hint="The model's default negative is merged in automatically."
+            :invalid="undErrors.length > 0"
+            :highlights="undErrors"
+          />
+          <PromptIssues
+            :errors="undErrors"
+            :notices="undNotices"
           />
         </BaseFold>
 
@@ -80,6 +116,7 @@ const saveOpen = ref(false)
           v-model="folds.chars"
           label="Characters"
           :badge="charBadge"
+          :invalid="charsInvalid"
         >
           <div class="flex flex-col gap-2">
             <CharacterCard
@@ -89,6 +126,9 @@ const saveOpen = ref(false)
               v-model:text="c.text"
               v-model:ref-id="c.refId"
               :index="i"
+              :lineage="lineage"
+              :server-errors="charServerErrors(i)"
+              @invalid="v => (charInvalid[i] = v)"
               @remove="chars.splice(i, 1)"
             />
             <button
@@ -485,7 +525,13 @@ const saveOpen = ref(false)
                 :decimals="2"
                 class="mt-2"
               />
-              <template v-if="loraName">
+              <div
+                v-if="loraName && styleHasLora"
+                class="mt-2 text-[10.5px] leading-relaxed text-faint"
+              >
+                The style's LoRA fills the second slot.
+              </div>
+              <template v-if="loraName && !styleHasLora">
                 <div class="mb-[5px] mt-3 text-xs text-dim">
                   Second LoRA (chained)
                 </div>

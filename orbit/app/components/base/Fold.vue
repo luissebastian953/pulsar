@@ -2,9 +2,11 @@
 export interface Props {
   label: string
   badge?: string
+  /** something inside has an error: the label turns red and bold */
+  invalid?: boolean
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), { badge: '', invalid: false })
 const open = defineModel<boolean>({ default: false })
 </script>
 
@@ -21,7 +23,10 @@ const open = defineModel<boolean>({ default: false })
         class="flex-none text-faint transition-transform duration-100"
         :class="open && 'rotate-90'"
       />
-      <span class="section-label">{{ label }}</span>
+      <span
+        class="section-label"
+        :data-invalid="invalid || undefined"
+      >{{ label }}</span>
       <span class="flex-1" />
       <span
         v-if="badge"

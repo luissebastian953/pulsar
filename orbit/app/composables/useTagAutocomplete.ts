@@ -40,8 +40,12 @@ export function useTagAutocomplete(model: Ref<string[]>, subset: () => 'all' | '
   }, 150)
 
   // tag-name form: lowercase, trimmed, whitespace runs → single underscore
-  // (matches core's tags.Normalize)
+  // (matches core's tags.Normalize). A chip carrying weighting syntax
+  // (`1.2::tag ::`, `{tag}`, `(tag:1.2)`) keeps its spaces: the space
+  // before a closing `::` is load-bearing (core parses it, orbit doesn't)
   function normalize(s: string) {
+    if (/::|[{}[\]]|\(.*:\s*[-+]?[\d.]+\s*\)/.test(s)) return s.trim().split(/\s+/).join(' ')
+
     return s.trim().toLowerCase().split(/\s+/).join('_')
   }
 

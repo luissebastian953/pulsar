@@ -29,6 +29,7 @@ import (
 	"pulsar/core/internal/job"
 	"pulsar/core/internal/nltag"
 	"pulsar/core/internal/pgtest"
+	"pulsar/core/internal/style"
 	"pulsar/core/internal/tags"
 	"pulsar/core/internal/worker"
 	"pulsar/core/internal/workflow"
@@ -124,7 +125,7 @@ func newEnv(t *testing.T, schema string, checker compliance.Checker) *env {
 
 	srv := &api.Server{
 		Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-		Tags: tags.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2, IPAdapterCSFrag: ipaCS, Regional2Frag: reg2, Regional3Frag: reg3, HiresFrag: hires, LoraFrag: lora, Lora2Frag: lora2, VpredFrag: vpred,
+		Tags: tags.NewStore(pool), Styles: style.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: i2iTpl, InpaintTpl: inpTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2, IPAdapterCSFrag: ipaCS, Regional2Frag: reg2, Regional3Frag: reg3, HiresFrag: hires, LoraFrag: lora, Lora2Frag: lora2, VpredFrag: vpred,
 		Cfg: api.Config{
 			Lineage: "illustrious", Checkpoint: "test-ckpt.safetensors",
 			QualityTags:    "masterpiece, best quality",
@@ -750,7 +751,7 @@ func TestEndToEndVpredLineage(t *testing.T) {
 	// stored params carry the v-pred lineage defaults (reproducibility)
 	var spec assembly.Spec
 	json.Unmarshal(v.Params, &spec)
-	if spec.Lineage != "noobai" || spec.CFG != 5.0 || spec.Sampler != "euler" || spec.CFGRescale != 0.7 {
+	if spec.Lineage != "noobai" || spec.CFG != 5.0 || spec.Sampler != "euler" || spec.CFGRescale != 0.55 {
 		t.Errorf("stored spec = lineage %q cfg %v sampler %q rescale %v",
 			spec.Lineage, spec.CFG, spec.Sampler, spec.CFGRescale)
 	}
@@ -764,8 +765,8 @@ func TestEndToEndVpredLineage(t *testing.T) {
 	if msd == nil || msd.Inputs["sampling"] != "v_prediction" || msd.Inputs["zsnr"] != true {
 		t.Errorf("ModelSamplingDiscrete missing/misconfigured: %+v", msd)
 	}
-	if got := g[workflow.Vpred.Rescale].Inputs["multiplier"]; got != 0.7 {
-		t.Errorf("rescale multiplier = %v, want 0.7", got)
+	if got := g[workflow.Vpred.Rescale].Inputs["multiplier"]; got != 0.55 {
+		t.Errorf("rescale multiplier = %v, want the noobai default 0.55 (docs/tuning.md)", got)
 	}
 	if m, ok := g[workflow.Txt2Img.Sampler].Inputs["model"].([]any); !ok || m[0] != workflow.Vpred.Rescale {
 		t.Errorf("KSampler model = %v, want the v-pred wrap", g[workflow.Txt2Img.Sampler].Inputs["model"])
@@ -1060,7 +1061,7 @@ func TestLiveSentinelVerdicts(t *testing.T) {
 	if url == "" || blockImg == "" || allowImg == "" {
 		t.Skip("SENTINEL_LIVE_URL / _BLOCK_IMAGE / _ALLOW_IMAGE not set")
 	}
-	checker := compliance.NewSentinel(url, "loli, shota, child, toddler, aged down", 0, 0)
+	checker := compliance.NewSentinel(url, "loli, shota, child, toddler, aged down", "", 0, 0)
 
 	for _, tc := range []struct {
 		name, img, want string
@@ -1080,5 +1081,111 @@ func TestLiveSentinelVerdicts(t *testing.T) {
 				t.Errorf("state = %s (%s), want %s", v.State, v.Error, tc.want)
 			}
 		})
+	}
+}
+
+// TestEndToEndStylePreset: a style merges its recipe in core — carriers
+// lead, finish trails, LoRA and negative attach, settings fill what the
+// request left unset — and the resolved values land on the job row.
+func TestEndToEndStylePreset(t *testing.T) {
+	e := newEnv(t, "e2e_style", compliance.Stub{})
+	id := e.generate(t, `{"prompt": "acheron (honkai: star rail), 1girl", "negative": "blurry", "seed": 7, "lineage": "noobai", "style": "hsr", "hires": true}`)
+	v := e.waitTerminal(t, id)
+	if v.State != "done" {
+		t.Fatalf("state = %s (%s), want done", v.State, v.Error)
+	}
+	var spec assembly.Spec
+	if err := json.Unmarshal(v.Params, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.Style != "hsr" {
+		t.Errorf("style = %q", spec.Style)
+	}
+	// the series qualifier's parens are escaped: ComfyUI must read them as
+	// text, not as a ×1.1 group (reports/NovelAI prompt weighting on SDXL.md S5)
+	if want := `masterpiece, best quality, official art, game cg, acheron \(honkai: star rail\), 1girl, painterly`; !strings.HasPrefix(spec.Prompt, want) {
+		t.Errorf("prompt = %q, want prefix %q", spec.Prompt, want)
+	}
+	if !strings.HasPrefix(spec.Negative, "loli, shota, child, blurry, (logo:1.3)") {
+		t.Errorf("negative = %q: safety first, then the user's, then the style's", spec.Negative)
+	}
+	if len(spec.Loras) != 1 || spec.Loras[0].Name != "honkai star rail_v3.safetensors" || *spec.Loras[0].Strength != 0.8 {
+		t.Errorf("loras = %+v", spec.Loras)
+	}
+	if spec.CFGRescale != 0.45 || spec.Steps != 28 || spec.CFG != 5 || spec.Sampler != "euler" || !spec.Hires || spec.HiresScale != 1.5 || spec.HiresDenoise != 0.55 {
+		t.Errorf("recipe settings: %+v", spec)
+	}
+
+	// the request's explicit values win over the recipe
+	id = e.generate(t, `{"prompt": "1girl", "seed": 7, "lineage": "noobai", "style": "hsr", "cfg_rescale": 0.7, "steps": 20}`)
+	v = e.waitTerminal(t, id)
+	spec = assembly.Spec{} // Unmarshal leaves omitted fields as they were
+	if err := json.Unmarshal(v.Params, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.CFGRescale != 0.7 || spec.Steps != 20 || spec.Hires {
+		t.Errorf("request must win: rescale %v steps %d hires %v", spec.CFGRescale, spec.Steps, spec.Hires)
+	}
+
+	// a recipe is per lineage: hsr exists for noobai only (default lineage here is illustrious)
+	resp, err := http.Post(e.ts.URL+"/generate", "application/json", strings.NewReader(`{"prompt": "1girl", "style": "hsr"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "illustrious") {
+		t.Errorf("wrong-lineage style = %d %s, want 400 naming the lineage", resp.StatusCode, body)
+	}
+
+	// a tag-only style runs on either lineage
+	id = e.generate(t, `{"prompt": "1girl", "seed": 7, "style": "chibi"}`)
+	v = e.waitTerminal(t, id)
+	spec = assembly.Spec{}
+	if err := json.Unmarshal(v.Params, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if v.State != "done" || spec.Style != "chibi" || !strings.HasPrefix(spec.Prompt, "masterpiece, best quality, chibi, 1girl") || len(spec.Loras) != 0 {
+		t.Errorf("chibi on illustrious: %s %+v", v.State, spec)
+	}
+}
+
+// TestStylesEndpoint: GET /styles lists the seeded presets for every lineage
+// with availability (no LORA_DIR configured → lenient, all available).
+func TestStylesEndpoint(t *testing.T) {
+	e := newEnv(t, "e2e_styles_list", compliance.Stub{})
+	resp, err := http.Get(e.ts.URL + "/styles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Styles []struct {
+			Slug      string   `json:"slug"`
+			Lineage   string   `json:"lineage"`
+			Family    string   `json:"family"`
+			Lora      string   `json:"lora"`
+			Available bool     `json:"available"`
+			Hires     *bool    `json:"hires"`
+			Rescale   *float64 `json:"cfg_rescale"`
+		} `json:"styles"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	for _, s := range out.Styles {
+		seen[s.Slug]++
+		if !s.Available {
+			t.Errorf("%s/%s unavailable without a LORA_DIR", s.Slug, s.Lineage)
+		}
+		if s.Slug == "hsr" {
+			if s.Lineage != "noobai" || s.Lora == "" || s.Hires == nil || !*s.Hires || s.Rescale == nil || *s.Rescale != 0.45 {
+				t.Errorf("hsr row = %+v", s)
+			}
+		}
+	}
+	if seen["hsr"] != 1 || seen["game-cg"] != 2 || seen["chibi"] != 2 {
+		t.Errorf("seed rows per slug = %v", seen)
 	}
 }

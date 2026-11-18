@@ -18,9 +18,10 @@ type Live struct {
 	http  *http.Client
 	// floor gates write-through and grounding (docs/tagdb.md)
 	floor int
-	// forbidden gates reference fetching at the source: the hardcoded
-	// floor set ∪ FORBIDDEN_TAG_UC. Config can only ADD tags — the floor
-	// never shrinks (fail-closed; CLAUDE.md non-negotiables).
+	// forbidden gates reference fetching at the source and refuses
+	// grounding: WatchSet (the hardcoded floor ∪ FORBIDDEN_TAG_UC). Config
+	// can only ADD tags — the floor never shrinks (fail-closed; CLAUDE.md
+	// non-negotiables).
 	forbidden map[string]bool
 
 	// serializes lookups: politeness + de facto single-flight
@@ -33,13 +34,7 @@ type Live struct {
 const missTTL = 10 * time.Minute
 
 func NewLive(pool *pgxpool.Pool, baseURL string, minPostCount int, forbiddenUC string) *Live {
-	forbidden := make(map[string]bool, len(forbiddenRefFloor))
-	for t := range forbiddenRefFloor {
-		forbidden[t] = true
-	}
-	for _, t := range ParseForbidden(forbiddenUC) {
-		forbidden[t] = true
-	}
+	forbidden := WatchSet(forbiddenUC)
 	return &Live{
 		store:     NewStore(pool),
 		base:      baseURL,
@@ -63,14 +58,19 @@ func (l *Live) Validate(ctx context.Context, name string) (*Resolution, error) {
 	return l.lookup(ctx, name)
 }
 
-// Ground is the cascade's live stage: Validate, floor-gated.
+// Ground is the cascade's live stage: Validate, floor-gated. A watched
+// tag never grounds (defence in depth: CheckPrompt rejects it anyway, but
+// translation must not hand one to the user — S8).
 func (l *Live) Ground(ctx context.Context, name string) (*Resolution, error) {
+	if Watched(l.forbidden, Normalize(name)) {
+		return nil, nil
+	}
 	r, err := l.Validate(ctx, name)
 	if err != nil || r == nil {
 		return nil, err
 	}
-	if r.Count < l.floor {
-		return nil, nil // drop — below the accuracy floor
+	if r.Count < l.floor || Watched(l.forbidden, r.Canonical) {
+		return nil, nil // drop — below the accuracy floor, or watched
 	}
 	return r, nil
 }

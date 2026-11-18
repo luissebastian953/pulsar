@@ -3,33 +3,42 @@
 ## Request → image
 
 ```
-1. validate + bounds-check (steps/res/batch caps)
-2. compliance: prompt pre-check ─────────────► may reject
-3. translate: NL → grounded tags   (4 boxes: prompt, UC, char prompt, char UC)
-4. assemble: quality tags + tags + defaults + settings → PromptSpec
-5. build: select template(s) + patch by node ID → API-format JSON
-6. enqueue: Postgres FOR UPDATE SKIP LOCKED
-7. route: least-busy ComfyUI process (one per GPU)
-8. execute: POST /prompt → WS progress → GET /view
-9. compliance: output classify ──────────────► may set state=blocked
-10. store: object storage + resolved params row
-11. stream: SSE to client
+0. (client) translate: NL → grounded tags via POST /translate, weights kept
+1. parse every prompt surface (prompt, UC, each character) ──► 400 + span
+2. validate + bounds-check (steps/res/batch caps); style lookup
+3. autoAnchor on parsed tags (post-cutoff characters)
+4. assemble: calibrate weights, relocate negative weights to UC, dedupe the
+   negative (safety first), emit flat escaped strings → Spec (+ structured tags)
+5. compliance: prompt check on the emitted strings ─────► may reject (422/503)
+6. build: select template(s) + patch by node ID → API-format JSON
+7. enqueue: Postgres FOR UPDATE SKIP LOCKED
+8. route: least-busy ComfyUI process (one per GPU)
+9. execute: POST /prompt → WS progress → GET /view
+10. compliance: output classify (THE gate) ───► may set state=blocked
+11. store: object storage + resolved params row
+12. stream: SSE to client
 ```
 
-Steps 3–5 are pure functions. Everything before step 6 is CPU-only and testable
+Steps 1 and 4 are pure functions (`prompt`, `assembly`). Everything before step 7 is CPU-only and testable
 without a GPU — which is most of the interesting logic.
 
 ## Endpoints
 
 ```
-POST   /generate            → validate, enqueue, 202 {job_id}
+POST   /generate            → parse, validate, enqueue, 202 {job_id, notices}; kind=txt2img|img2img|inpaint|pose, style=<slug>;
+                               400 {error, code, field, start, end, tag, hint} on a prompt parse error
 GET    /jobs/:id            → status + resolved params
 GET    /jobs/:id/stream     → SSE: queue pos → step progress → done|blocked
-POST   /images              → upload (img2img / references / inpaint base)
+GET    /images/:id          → stored output (…-lineart / …-skeleton for pose roles)
+POST   /uploads             → image ingest (img2img / references / inpaint base + mask)
 GET    /tags?q=&subset=     → autocomplete; subset=all|pose
-POST   /translate           → NL → grounded tags (preview before generate)
-GET    /history             → user's generations
-POST   /pose/use/:id        → skeleton → ControlNet input for /create
+GET    /tags/lookup?q=      → one tag, DB then live Danbooru
+POST   /translate           → NL → grounded tags with weights + `prompt` in NovelAI syntax (parsed first; the LLM never sees operators)
+POST   /prompt/parse        → {text, surface, lineage} → tags/runs/weights, errors[], notices[] (live validation; syntax only)
+GET    /styles              → style presets per lineage (docs/tuning.md#style-presets)
+GET    /loras, /checkpoints → installed model files
+GET    /history             → user's generations; DELETE /history[/:id]
+GET    /healthz
 ```
 
 ## Why async

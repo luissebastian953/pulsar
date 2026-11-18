@@ -77,7 +77,7 @@ Danbooru-trained — anime-native apparent-age assessment, sha-pinned, fetched b
 `core/internal/compliance`**:
 
 - The `FORBIDDEN_TAG_UC` list drives all three mechanisms: the negative prompt,
-  positive-prompt rejection (`CheckPrompt`), and output blocking (`CheckOutput`
+  prompt rejection (`CheckPrompt`, below), and output blocking (`CheckOutput`
   / `CheckUpload`).
 - Two rules block an output, both env-tunable and code-clamped (never
   disableable): any forbidden tag ≥ `SENTINEL_BLOCK_THRESHOLD` (default 0.35),
@@ -95,6 +95,57 @@ Danbooru-trained — anime-native apparent-age assessment, sha-pinned, fetched b
 
 Accuracy tuning against real generations belongs in `eval/`; the threshold is
 a start, not a conclusion.
+
+### Prompt check: parse before check, on every surface
+
+`CheckPrompt` (`core/internal/compliance/prompt.go`) is a pre-filter, not the
+gate. It exists to close prompt-level holes cheaply; **`CheckOutput` remains
+the gate**, and a pass means "no known pre-filter hole", never "safe". It
+runs with or without the sentinel sidecar (`PromptGuard` when `SENTINEL_URL`
+is unset). The rules (reports/NovelAI prompt weighting on SDXL.md S7):
+
+1. **Parse before check.** Every user surface is parsed by
+   `core/internal/prompt` before anything reads it; assembly emits each tag
+   as one flat, escaped `(text:w)` group, so no user text can open or close a
+   group across tags or capture system text.
+2. **Read what ComfyUI reads.** The check re-parses the EXACT strings
+   patched into the CLIPTextEncode nodes — `spec.Prompt` (node 2),
+   `spec.Negative` (node 3), every character prompt (nodes 32/36/42; hires
+   reuses 2/3) — with `prompt.ComfyParse`, a port of ComfyUI v0.28.0's own
+   grammar pinned by fixtures generated from the Python. Wrappers the encoder
+   strips (`( )`, `:w`, `\(`, braces) can't launder a tag past it.
+3. **Differential.** That parse must equal the Spec's structured tags (same
+   boundaries, same non-space text, weights within 5e-5); a mismatch is a
+   bug or a bypass and rejects. Missing structure errors (503).
+4. **The negative is scanned.** Its first tags must be `FORBIDDEN_TAG_UC` in
+   order at exactly weight 1. Any later copy of a safety term is dropped by
+   assembly's dedupe (which also neutralises the history round-trip), so a
+   watched tag remaining outside the safety block rejects.
+5. **WatchSet** = hard-coded floor ∪ `FORBIDDEN_TAG_UC` (`tags.WatchSet`),
+   one function shared with the reference-fetch gate and `Live.Ground`
+   (which refuses to ground a watched tag). Config can only add. The
+   classifier's `include=` list carries the WatchSet so every watched score
+   is reported; the output gate's blocking rule is unchanged.
+6. **Watched tag at any weight rejects** in the prompt or a character box —
+   weight never launders. Match forms: the normalized name; that with
+   `( ) { } [ ] \ " '` stripped; that with `_` removed (exact, so
+   `lolita_fashion` passes). The word-boundary net stays off until the
+   collision review (TODO, S11 #6).
+7. **Complement list** (`AGE_COMPLEMENT_TAGS`, env only; unset = no
+   complement checks): an adult-signal tag anywhere in the negative outside
+   the safety block rejects, and one emitted below weight 1 in a prompt
+   rejects. This closes complement steering — pushing *away* from adult
+   features — without naming any watched tag. Never env-toggleable off once
+   listed.
+8. **`embedding:`** anywhere (any case) rejects — the parser rejects it on
+   every surface, config included, and the check re-asserts it.
+9. **Negative weights** in a prompt are relocated to Undesired Content at
+   |w| (then subject to rules 4, 7); in a negative they are a 400, since an
+   inverted copy in UC would steer toward the term. Zero weights are dropped.
+
+`FORBIDDEN_TAG_UC` itself must be plain comma-separated tags: any operator
+refuses boot, and assembly refuses per request. Every rule fails closed
+(parse error 400, check error 503, rejection 422).
 
 ## Known risks
 

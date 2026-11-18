@@ -1,0 +1,51 @@
+# Capability 1 — free-text sentences, optionally mixed with booru tags.
+# Needs an LLM key (POST /translate); without one every `translate` case is
+# recorded as rejected, which is the honest result. Prompts: NovelAI's own
+# documented mixed prompt (multi-character docs) split per character, plus
+# the brief's kimono sentence. Pass hypotheses (README): recall ≥ 0.80,
+# |NL − tag-only| ≤ 0.10, order delta ≤ 0.10.
+name: assurance-free-text
+seeds: [7, 42, 1234, 7777, 3, 11, 21, 88, 101, 202, 303, 404, 505, 606, 707, 808]
+params:
+  lineage: noobai
+  checkpoint: noobai-xl-vpred.safetensors
+  auto_reference: false
+columns: 8
+cases:
+  - name: factory-left-mixed
+    translate: true
+    # verbatim NovelAI character prompt (left girl): tags + a sentence
+    prompt: "girl, purple eyes, short hair, smile, open mouth, ruffled blouse, red blouse, pleated skirt, blonde hair, green scarf, hands on own hips, blunt bangs, blue skirt, medium skirt, small breasts, bob cut, pointing, long sleeves, red nails, fang, cowboy shot. She is being pointed at."
+    tags: "1girl, solo"
+    # red_blouse is outside the tagger vocabulary → blouse
+    expect: [1girl, purple eyes, short hair, smile, open mouth, blouse, pleated skirt, blonde hair, green scarf, hands on own hips, blunt bangs, blue skirt, bob cut, pointing, long sleeves, red nails, fang, cowboy shot]
+  - name: factory-right-mixed
+    translate: true
+    prompt: "girl, very long hair, purple hair, curly hair, white jeans, white pants, golden shirt, cowboy shot, green eyes, turtleneck sweater, sleeveless turtleneck, side braid, medium breasts, sleeveless, ripped jeans, wavy mouth, blush, purple nails, open mouth, pointing at another, speech bubble. She is pointing at the other girl and scolding her."
+    tags: "1girl, solo"
+    expect: [1girl, very long hair, purple hair, curly hair, white pants, green eyes, turtleneck, sleeveless, side braid, blush, purple nails, open mouth, speech bubble, cowboy shot]
+  - name: kimono-mixed
+    translate: true
+    prompt: "a girl in a red kimono standing under a torii at dusk"
+    tags: "1girl, looking at viewer"
+    expect: [1girl, kimono, red kimono, torii, dusk, standing, looking at viewer]
+  - name: kimono-tags-only            # parity control, same expect
+    prompt: "1girl, red kimono, kimono, torii, dusk, standing, looking at viewer"
+    expect: [1girl, kimono, red kimono, torii, dusk, standing, looking at viewer]
+  - name: kimono-tags-first           # order permutation: explicit tags lead the prose
+    translate: true
+    prompt: "a girl in a red kimono standing under a torii at dusk"
+    tags: "1girl, looking at viewer"
+    tags_position: first
+    expect: [1girl, kimono, red kimono, torii, dusk, standing, looking at viewer]
+  - name: prose-only-library
+    translate: true
+    prompt: "a tired silver-haired librarian in round glasses reshelving books late at night, warm lamplight, dust in the air"
+    # Danbooru aliases silver_hair → grey_hair; the tagger knows grey_hair
+    expect: [1girl, grey hair, glasses, round eyewear, book, library, night, lamp]
+  - name: unmappable-concept
+    # "woven from starlight" has no Danbooru vocabulary: the pass is that it
+    # shows up in results.translate.dropped and nothing invented reaches the model
+    translate: true
+    prompt: "a girl wearing a dress woven from starlight, standing in a quiet library"
+    expect: [1girl, dress, library, standing]

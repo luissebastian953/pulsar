@@ -50,6 +50,7 @@ class names:
 
   --color-beam: #E8F4FF;
   --color-warn: #FFB86B;
+  --color-danger: #FF5A5F;  /* prompt errors — the server will refuse it */
 
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -191,8 +192,41 @@ the composer differs.
 
 **Composer**
 - `PromptBox` (textarea + mode toggle) · `TagInput` (Reka Combobox) ·
-  `Fold` (`<details>` + state badge) · `CharacterCard` · `ReferenceUpload` ·
-  `AspectSelect` · `BatchSegment` · `AdvancedPanel`
+  `Fold` (`<details>` + state badge) · `StylePicker` (preset cards from
+  `GET /styles`, disabled when the LoRA is missing) · `CharacterCard` ·
+  `ReferenceUpload` · `AspectSelect` · `BatchSegment` · `AdvancedPanel`
+
+**Prompt validation** (docs/tagdb.md#weighting)
+- Core owns the grammar; orbit never parses or builds prompt syntax. Every
+  prompt surface — Describe (chips in tags mode, the textarea in plain mode),
+  Undesired content, each `CharacterCard` — is validated live through
+  `usePromptParse`: a debounced `POST /prompt/parse` with the surface kind
+  and the active lineage (stale answers dropped). `/generate`'s located 400
+  (`{error, code, field, start, end, tag, hint}`, `field` = `prompt` |
+  `negative` | `characters.N`) is mapped back onto the same field while its
+  text is unchanged; a 400 inside a folded section opens the fold.
+- Offsets are UTF-16 code units — JS string indices, no conversion. In tags
+  mode chips are joined with `", "` exactly as sent, so an error span maps to
+  the chips it overlaps (`utils/prompt-issues.ts`).
+- An error shows four ways: the offending chip red and bold
+  (`BaseTagChip invalid`), or the offending span marked by a mirror layer
+  behind a transparent textarea (`BaseInput highlights`; caret and selection
+  stay native); a red outline on the input (`invalid`); the input's label red
+  and bold (`BaseSectionLabel` / `BaseFold` / the character label); and the
+  message with its hint below the input (`PromptIssues`). All colour comes
+  from `--color-danger`.
+- Notices (relocated to Undesired Content, converted from SD syntax,
+  calibrated for the lineage, unclosed `w::` section) render quietly under
+  the input in `text-faint`.
+- Chips that carry weighting syntax keep their spaces (the space before a
+  closing `::` is load-bearing); plain chips normalise to tag-name form.
+- Plain mode sends `/translate`'s `prompt` (the grounded tags in NovelAI
+  syntax, weights kept), not bare canonical names.
+- History round-trip: editor boxes restore from the stored structured tags
+  whose `source` is `user` (their `nai` form) — never the safety block,
+  `DEFAULT_UC`, quality or style tags, which core re-adds; `HistoryDetail`
+  displays from tags. Legacy rows without tags fall back to the string, and
+  core's negative dedupe neutralises the safety copies they carry.
 
 **Stage**
 - `Canvas` (aspect-matched, empty/progress/result states) · `ProgressBar` (SSE) ·

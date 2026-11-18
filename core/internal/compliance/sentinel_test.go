@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"pulsar/core/internal/assembly"
+	"pulsar/core/internal/tags"
 )
 
 const forbidden = "loli, shota, child, toddler, aged down"
@@ -44,7 +46,7 @@ func TestOutputPolicy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewSentinel(fakeSentinel(t, tc.rating, tc.tags).URL, forbidden, 0.35, 0.05)
+			s := NewSentinel(fakeSentinel(t, tc.rating, tc.tags).URL, forbidden, "", 0.35, 0.05)
 			dec, err := s.CheckOutput(ctx, []byte("img"))
 			if err != nil {
 				t.Fatal(err)
@@ -58,7 +60,7 @@ func TestOutputPolicy(t *testing.T) {
 
 func TestThresholdClamp(t *testing.T) {
 	// env can tune the gate but never disable it
-	s := NewSentinel(fakeSentinel(t, nil, map[string]float64{"loli": 0.7}).URL, forbidden, 99, 99)
+	s := NewSentinel(fakeSentinel(t, nil, map[string]float64{"loli": 0.7}).URL, forbidden, "", 99, 99)
 	dec, err := s.CheckOutput(context.Background(), []byte("img"))
 	if err != nil {
 		t.Fatal(err)
@@ -68,26 +70,62 @@ func TestThresholdClamp(t *testing.T) {
 	}
 }
 
+// build assembles a real Spec — CheckPrompt reads emitted strings and
+// their structure, so tests go through the same path the API does.
+func build(t *testing.T, forbiddenUC string, req assembly.Request) assembly.Spec {
+	t.Helper()
+	s, err := assembly.Build(req, assembly.Options{Lineage: "illustrious", Seed: 1, ForbiddenTagUC: forbiddenUC})
+	if err != nil {
+		t.Fatalf("build %+v: %v", req, err)
+	}
+	return s
+}
+
 func TestPromptRejection(t *testing.T) {
-	s := NewSentinel("http://unused", forbidden, 0, 0)
-	dec, err := s.CheckPrompt(context.Background(), assembly.Spec{Prompt: "masterpiece, 1girl, Loli, smile"})
+	s := NewSentinel("http://unused", forbidden, "", 0, 0)
+	dec, err := s.CheckPrompt(context.Background(), build(t, forbidden, assembly.Request{Prompt: "masterpiece, 1girl, Loli, smile"}))
 	if err != nil || dec.Allowed {
 		t.Errorf("forbidden tag in prompt must reject: %+v, %v", dec, err)
 	}
-	dec, err = s.CheckPrompt(context.Background(), assembly.Spec{Prompt: "masterpiece, 1girl, lolita_fashion"})
+	dec, err = s.CheckPrompt(context.Background(), build(t, forbidden, assembly.Request{Prompt: "masterpiece, 1girl, lolita_fashion"}))
 	if err != nil || !dec.Allowed {
 		t.Errorf("substring must not reject: %+v, %v", dec, err)
 	}
 }
 
 func TestPromptRejectionScansCharacters(t *testing.T) {
-	s := NewSentinel("http://unused", forbidden, 0, 0)
-	dec, err := s.CheckPrompt(context.Background(), assembly.Spec{
+	s := NewSentinel("http://unused", forbidden, "", 0, 0)
+	dec, err := s.CheckPrompt(context.Background(), build(t, forbidden, assembly.Request{
 		Prompt:     "masterpiece, 2girls",
 		Characters: []assembly.Character{{Prompt: "blonde hair"}, {Prompt: "loli, smile"}},
-	})
+	}))
 	if err != nil || dec.Allowed {
 		t.Errorf("forbidden tag in character prompt must reject: %+v, %v", dec, err)
+	}
+}
+
+// TestClassifierIncludesWatchSet: include= carries floor ∪ env so every
+// watched tag is scored; the blocking policy itself is unchanged (it sums
+// the FORBIDDEN_TAG_UC tags, exactly as before).
+func TestClassifierIncludesWatchSet(t *testing.T) {
+	var include string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		include = r.URL.Query().Get("include")
+		json.NewEncoder(w).Encode(map[string]any{"rating": map[string]float64{"general": 0.9}, "tags": map[string]float64{"1girl": 0.9}})
+	}))
+	t.Cleanup(srv.Close)
+	s := NewSentinel(srv.URL, "extra_env_tag", "", 0, 0)
+	if _, err := s.CheckOutput(context.Background(), []byte("img")); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, t := range strings.Split(include, ",") {
+		got[t] = true
+	}
+	for _, want := range append(tags.WatchFloor(), "extra_env_tag") {
+		if !got[want] {
+			t.Errorf("include= %q is missing a watch-set tag", include)
+		}
 	}
 }
 
@@ -96,7 +134,7 @@ func TestSentinelDownFailsClosed(t *testing.T) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	t.Cleanup(srv.Close)
-	s := NewSentinel(srv.URL, forbidden, 0, 0)
+	s := NewSentinel(srv.URL, forbidden, "", 0, 0)
 	if _, err := s.CheckOutput(context.Background(), []byte("img")); err == nil {
 		t.Error("sentinel failure must return an error (callers block on error)")
 	}

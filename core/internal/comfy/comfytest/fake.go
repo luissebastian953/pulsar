@@ -3,6 +3,7 @@ package comfytest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -93,10 +94,17 @@ func (f *Fake) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
-	ctx := r.Context()
+	// r.Context() is not cancelled when a hijacked WebSocket closes, so the
+	// reader doubles as the liveness signal: once the client closes, cancel
+	// and leave. Without this a stale handler from a finished job keeps
+	// competing for `submitted` — and wins, channel receivers being FIFO —
+	// so the second generation in an env never sees its completion.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 	// consume reads so close frames are processed and the client's graceful
 	// close doesn't hang until its timeout
 	go func() {
+		defer cancel()
 		for {
 			if _, _, err := conn.Read(ctx); err != nil {
 				return

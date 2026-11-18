@@ -9,13 +9,15 @@ export interface Props {
   count?: number
   index?: number
   removable?: boolean
+  /** the prompt parser rejected this chip: red and bold */
+  invalid?: boolean
 }
 
 export interface Emits {
   remove: []
 }
 
-const props = withDefaults(defineProps<Props>(), { count: 0, index: 0, removable: false })
+const props = withDefaults(defineProps<Props>(), { count: 0, index: 0, removable: false, invalid: false })
 
 const emit = defineEmits<Emits>()
 
@@ -27,6 +29,8 @@ const countLabel = computed(() => formatCount(props.count))
   <span
     class="tag-chip font-mono"
     :data-cat="category"
+    :data-invalid="invalid || undefined"
+    :aria-invalid="invalid || undefined"
     :style="{ animationDelay: `${index * 22}ms` }"
   >
     <span
