@@ -57,8 +57,12 @@ EOF
 
 mkdir -p "$DIR/models/checkpoints" "$DIR/output" "$DIR/input"
 
+# --disable-metadata: without it SaveImage writes the whole patched graph
+# (safety negative, model files, upload IDs) into every PNG. core strips
+# regardless (docs/compliance.md#output-metadata); this is the first layer.
 exec "$VENV/bin/python" "$APP/main.py" \
   --listen 127.0.0.1 --port "$PORT" \
   --extra-model-paths-config "$DIR/.extra_model_paths.yaml" \
   --output-directory "$DIR/output" \
-  --input-directory "$DIR/input"
+  --input-directory "$DIR/input" \
+  --disable-metadata

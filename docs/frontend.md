@@ -228,6 +228,62 @@ the composer differs.
   displays from tags. Legacy rows without tags fall back to the string, and
   core's negative dedupe neutralises the safety copies they carry.
 
+<a id="prompt-chunks"></a>
+**Prompt chunks** (docs/architecture.md#prompt-chunks)
+- A chunk is a named, reusable snippet. The reference token is
+  `!macro:Name!`. **Orbit inserts tokens; core resolves them** — expansion,
+  nesting, limits, errors and every offset are core's. Orbit only recognises
+  where a token is (`utils/chunks.ts`) so it can insert, rename, tint and
+  send it; it never expands one.
+- `@` is only an editor trigger (`useChunkPicker` + `ChunkPicker`): at the
+  start, after whitespace or after a comma it opens the picker; the query
+  runs to the caret (spaces allowed, a comma closes it); ArrowUp/Down, Enter
+  or Tab, Escape, closes 150 ms after blur. Ranking: name starts-with,
+  contains, subsequence; the same on "Category: name"; then content. Picking
+  writes the token into a textarea, or adds a chunk chip in tags mode (the
+  chip is the token; `normalize()` leaves it verbatim).
+- Storage: `useChunks` is the single owner of
+  `useLocalStorage('pulsar.chunks.v1')` (collapsed categories in
+  `pulsar.chunks.collapsed`), with JSON export/import — no table, core has no
+  identity. Every request (`/generate`, `/prompt/parse`, `/translate`) carries
+  only the chunks its text references, nested ones included. Names: trimmed,
+  case-sensitive, unique, ≤ 64 chars, none of `! , | { } [ ] ::`; ≤ 256
+  chunks, ≤ 4 KiB each.
+- `ChunkPanel` (a popover on desktop, a bottom sheet on a phone; the button
+  sits in the prompt box header) has two tabs. *Prompt Chunks*: Uncategorized
+  first, then categories; click inserts at the last-focused prompt field's
+  caret (a toast if none was focused), ✎ edits, drag or Alt+←/→ reorders.
+  `ChunkForm` validates content through `/prompt/parse` before saving and
+  shows core's located errors. *Settings*: see below.
+- Colours are a fixed palette, `--color-chunk-1…8`, stored by key and applied
+  as `data-color` on a `.chunk-color` element (which sets `--chip`). Picked
+  with Reka's `ColorSwatchPicker`. No free hex.
+- Rendering: `PromptInput` (the prompt textarea: `BaseInput` + picker) paints
+  each resolved reference core located in its chunk's colour; the caret
+  inside a token shows its expansion; a double-click bakes it into plain text
+  by core's span. `BaseInput highlights` ranges are typed
+  (`error | chunk | op | up | down`); an error always wins, a chunk is never
+  tinted by weight.
+- Rename rewrites the token in the live fields, the other chunks, saved
+  configs and pose presets. Delete bakes references first (by core's spans),
+  so none dangle; delete-category moves its chunks to Uncategorized.
+- A saved config stores a copy of the chunks it references and recreates
+  missing ones on apply. History restore shows a token only where today's
+  chunk still resolves to exactly the stored tags (same hash, same tags);
+  otherwise the expanded tags are restored.
+- Settings (per browser): `pulsar.settings.tagSuggestions` — off silences
+  only the tag autocomplete popup (`useTagAutocomplete.search`); the `@`
+  picker, the commit keys and the resolved-strip previews keep working. A
+  picker query is never sent to `/tags`, the live lookup or `/translate`,
+  whatever the setting. `pulsar.settings.highlightEmphasis` (on by default)
+  tints core's `marks` in NovelAI units: `--color-emph-up` / `-down` at
+  `0.2 + 0.4·clamp(|w−1|)` (nothing within 0.01 of 1), `--color-emph-op` at
+  0.5 for operators; in tags mode the chip is tinted. Marks arrive with the
+  debounced parse and are absent while the surface has a parse error.
+- `useChunks` and `usePromptSettings` are page-wide singletons in a detached
+  effect scope: they must keep persisting after the component that first
+  asked for them unmounts.
+
 **Stage**
 - `Canvas` (aspect-matched, empty/progress/result states) · `ProgressBar` (SSE) ·
   `ResultGrid` (2×2 for `/pose`) · `OutputTabs` (lineart/skeleton/source) ·

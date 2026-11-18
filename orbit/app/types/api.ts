@@ -7,10 +7,13 @@ export type TranslatedTag = {
   category: TagCategory
   count: number
   concept: string
-  stage: 'exact' | 'alias' | 'fuzzy' | 'live'
+  // 'chunk': the tag came out of a prompt chunk and never went to the LLM
+  stage: 'exact' | 'alias' | 'fuzzy' | 'live' | 'chunk'
   // NovelAI-unit weight the source text carried (1 = unweighted; < 0 is
   // relocated to Undesired Content by core)
   weight?: number
+  // the prompt chunk the tag came out of
+  chunk?: string
 }
 
 export type TranslateResult = {
@@ -41,6 +44,23 @@ export type PromptSource
 
 export type PromptRun = { text: string, w: number, emitted: number }
 
+// ── prompt chunks (docs/frontend.md#prompt-chunks) ──────────────────
+// A chunk as sent with a request: orbit stores chunks and sends the ones a
+// text references; core expands `!macro:Name!` and owns every rule.
+export type ChunkPayload = { name: string, content: string }
+
+// a tag's provenance: the chunk it came out of and core's hash of what
+// that chunk resolved to
+export type ChunkRef = { name: string, hash: string }
+
+// one resolved `!macro:Name!` in a parsed text: where the token sits and
+// the text it expands to (nested chunks included)
+export type ChunkSpan = ChunkRef & { start: number, end: number, tag: number, text: string }
+
+// typed weighting located by core, for the emphasis highlight: weighted
+// text (up / down) and operators (`{ } [ ] N:: ::`); `w` is NovelAI units
+export type PromptMark = { start: number, end: number, kind: 'up' | 'down' | 'op', w: number }
+
 // a tag as stored on the job row (assembly.Spec)
 export type PromptTag = {
   runs: PromptRun[]
@@ -49,6 +69,7 @@ export type PromptTag = {
   source: PromptSource
   nai?: string
   relocated?: boolean
+  chunk?: ChunkRef
 }
 
 // a tag from POST /prompt/parse, located in the surface
@@ -61,6 +82,8 @@ export type ParsedTag = {
   tag: number
   runs: PromptRun[]
   relocated?: boolean
+  // the tag came out of this chunk reference; start/end are the token's
+  chunk?: ChunkRef
 }
 
 export type PromptParseResult = {
@@ -68,6 +91,9 @@ export type PromptParseResult = {
   relocated: ParsedTag[]
   errors: PromptIssue[]
   notices: PromptIssue[]
+  // absent on a core older than prompt chunks
+  chunks?: ChunkSpan[]
+  marks?: PromptMark[]
   emitted: string
 }
 
@@ -163,6 +189,8 @@ export type GenerationRequest = {
   scheduler?: string
   seed?: number
   quality_tags?: boolean
+  // the prompt chunks the surfaces reference as `!macro:Name!`
+  chunks?: ChunkPayload[]
 }
 
 // Marshaled assembly.Spec persisted per job and returned by /history — the

@@ -41,10 +41,10 @@ describe('prompt-issues utils', () => {
 
   it('segments text for the highlight overlay', () => {
     expect(segmentText('a}, b', [issue(1, 2)])).toEqual([
-      { text: 'a', mark: false }, { text: '}', mark: true }, { text: ', b', mark: false },
+      { text: 'a', mark: false }, { text: '}', mark: true, kind: 'error' }, { text: ', b', mark: false },
     ])
     // zero-width issues mark one character; out-of-range is clamped
-    expect(segmentText('ab', [issue(1, 1)])).toEqual([{ text: 'a', mark: false }, { text: 'b', mark: true }])
+    expect(segmentText('ab', [issue(1, 1)])).toEqual([{ text: 'a', mark: false }, { text: 'b', mark: true, kind: 'error' }])
     expect(segmentText('ab', [issue(5, 9)])).toEqual([{ text: 'ab', mark: false }])
     // overlapping ranges don't duplicate text
     expect(segmentText('abcdef', [issue(1, 4), issue(2, 5)]).map(s => s.text).join('')).toBe('abcdef')

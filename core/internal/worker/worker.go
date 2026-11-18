@@ -12,6 +12,7 @@ import (
 	"pulsar/core/internal/comfy"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/job"
+	"pulsar/core/internal/pngmeta"
 	"pulsar/core/internal/workflow"
 )
 
@@ -98,7 +99,13 @@ func (w *Worker) process(ctx context.Context, j *job.Job) {
 		return
 	}
 
-	// pre-delivery compliance, fail closed; one blocked role blocks the job
+	// Metadata strip, fail closed, BEFORE the compliance check: ComfyUI and
+	// custom nodes write the patched graph (safety negative, model files,
+	// upload IDs) into PNG text chunks. Stripping first means CheckOutput
+	// classifies exactly the bytes that get stored — never a variant of them.
+	// A PNG that will not parse is a failed job, not a delivered one.
+	// docs/compliance.md#output-metadata
+	clean := make(map[string][]byte, len(roles))
 	for role, node := range roles {
 		img, ok := outs[node]
 		if !ok {
@@ -107,6 +114,19 @@ func (w *Worker) process(ctx context.Context, j *job.Job) {
 			})
 			return
 		}
+		stripped, serr := pngmeta.Strip(img)
+		if serr != nil {
+			log.Printf("worker: job %s: strip %s output: %v", j.ID, roleName(role), serr)
+			w.finish(ctx, j.ID, job.EventFailed, func() error {
+				return w.Store.MarkFailed(ctx, j.ID, "output image malformed ("+roleName(role)+")")
+			})
+			return
+		}
+		clean[role] = stripped
+	}
+
+	// pre-delivery compliance, fail closed; one blocked role blocks the job
+	for role, img := range clean {
 		dec, cerr := w.Checker.CheckOutput(ctx, img)
 		if cerr != nil || !dec.Allowed {
 			if cerr != nil {
@@ -121,8 +141,8 @@ func (w *Worker) process(ctx context.Context, j *job.Job) {
 		}
 	}
 
-	for role, node := range roles {
-		if err := w.Blobs.Put(blobID(j.ID, role), outs[node]); err != nil {
+	for role, img := range clean {
+		if err := w.Blobs.Put(blobID(j.ID, role), img); err != nil {
 			w.finish(ctx, j.ID, job.EventFailed, func() error {
 				return w.Store.MarkFailed(ctx, j.ID, "store image: "+err.Error())
 			})

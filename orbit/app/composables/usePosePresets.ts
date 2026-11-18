@@ -1,4 +1,5 @@
 import { useLocalStorage } from '@vueuse/core'
+import { effectScope, nextTick } from 'vue'
 import type { GenerationParams } from '~/types/api'
 
 // The /pose composer's closed tag tables. Counts are display/sort weights
@@ -105,6 +106,26 @@ export function usePosePresets() {
   }
 
   return { presets, save, remove }
+}
+
+// rewritePosePresetPrompts applies a text edit to every saved pose prompt
+// (a chunk rename rewrites its `!macro:Old!` tokens).
+export function rewritePosePresetPrompts(edit: (text: string) => string) {
+  const scope = effectScope(true)
+  const presets = scope.run(() => useLocalStorage<PosePreset[]>(STORAGE_KEY, []))!
+  nextTick(() => scope.stop())
+  let changed = false
+  const next = presets.value.map((p) => {
+    const prompt = edit(p.config.prompt ?? '')
+
+    if (prompt === p.config.prompt) return p
+
+    changed = true
+
+    return { ...p, config: { ...p.config, prompt } }
+  })
+
+  if (changed) presets.value = next
 }
 
 // Same-recipe detection for the history modal's "Saved" state.

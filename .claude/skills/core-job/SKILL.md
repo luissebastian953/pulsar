@@ -16,9 +16,11 @@ description: How to add or modify an endpoint, job type, or generation mode in p
 6. enqueue (Postgres FOR UPDATE SKIP LOCKED)
 7. route → least-busy ComfyUI process
 8. execute: POST /prompt → WS → GET /view
-9. compliance.CheckOutput  ─────────────► may set state=blocked
-10. store (object storage + resolved params)
-11. stream (SSE)
+9. pngmeta.Strip (every output)  ───────► malformed PNG = state=failed
+10. compliance.CheckOutput  ────────────► may set state=blocked
+11. store (object storage + resolved params) — the bytes step 10 saw
+12. stream (SSE)
+13. GET /images/:id → pngmeta.Strip again, then serve
 ```
 
 Steps 3–5 are pure. Everything before step 6 is CPU-only and testable without a GPU
@@ -114,6 +116,24 @@ The machinery is generic — extend it, don't fork it:
   job — extractions derive from the source, partial delivery makes no sense.
 - A new kind = template + `OutputRoles` case + (if multi-output) nothing else:
   worker, blobs, API, and SSE already handle it.
+
+## Output bytes: strip, then check, then store
+
+ComfyUI (and any custom node) writes the patched graph into PNG text chunks —
+safety negative, model filenames, upload IDs. Delivered bytes carry only
+allow-listed chunks (`internal/pngmeta`, `docs/compliance.md#output-metadata`):
+
+- The worker strips **before** `CheckOutput`, and stores the stripped slice.
+  The classifier must see exactly the bytes that get stored — never check one
+  slice and `Put` another.
+- A strip error fails the job (`MarkFailed`). Fail closed; don't fall back to
+  the raw bytes.
+- `handleImage` strips again on the way out. Any new route that returns image
+  bytes does the same.
+- Never embed the job ID, upload IDs or config text in an output; anything
+  pulsar adds goes through `pngmeta.Rewrite`.
+- Pinned by `TestDeliveredImagesCarryNoGraph`. Fakes that return images must be
+  real PNGs (`comfytest.Fake.EmbedGraph` reproduces ComfyUI's chunk).
 
 ## Adding a new generation mode — checklist
 

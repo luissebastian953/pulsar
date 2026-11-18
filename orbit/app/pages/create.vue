@@ -9,6 +9,7 @@ const { public: { modelName } } = useRuntimeConfig()
 const {
   prompt, mode, tagList, und, chars, translate, stripTags, charBadge,
   promptErrors, promptMarks, promptNotices, invalidChips, undErrors, undNotices, charServerErrors, charInvalid, charsInvalid,
+  promptLive, undLive,
   aspect, batch, sizeTier, dims,
   lineage, cfgRescale, checkpoints, activeCheckpoint, steps, guidance,
   seedText, sampler, scheduler, qualityTags, faceDetail,
@@ -33,26 +34,32 @@ const saveOpen = ref(false)
     <!-- composer rail -->
     <aside class="order-3 flex flex-none flex-col bg-surface md:order-1 md:h-full md:w-[372px] md:min-h-0 md:border-r md:border-line">
       <div class="min-h-0 p-4 md:flex-1 md:overflow-y-auto">
-        <BaseSectionLabel
-          class="mb-2.5"
-          :invalid="promptErrors.length > 0"
-        >
-          Describe
-        </BaseSectionLabel>
-        <BaseInput
+        <div class="mb-2.5 flex items-center gap-1.5">
+          <BaseSectionLabel
+            class="flex-1"
+            :invalid="promptErrors.length > 0"
+          >
+            Describe
+          </BaseSectionLabel>
+          <ChunkPanel />
+        </div>
+        <PromptInput
           v-if="mode === 'plain'"
           v-model="prompt"
-          type="textarea"
           size="large"
           placeholder="a silver-haired girl in a school uniform, looking back at sunset…"
+          :errors="promptMarks"
           :invalid="promptErrors.length > 0"
-          :highlights="promptMarks"
+          :spans="promptLive.chunks.value"
+          :marks="promptLive.marks.value"
         />
         <TagInput
           v-else
           v-model="tagList"
           :invalid="promptErrors.length > 0"
           :invalid-chips="invalidChips"
+          :spans="promptLive.chunks.value"
+          :tags="promptLive.liveTags.value"
         />
         <PromptIssues
           :errors="promptErrors"
@@ -97,14 +104,14 @@ const saveOpen = ref(false)
           :badge="undErrors.length ? 'error' : (und.trim() ? 'custom' : 'none')"
           :invalid="undErrors.length > 0"
         >
-          <BaseInput
+          <PromptInput
             v-model="und"
-            type="textarea"
             size="small"
             placeholder="lowres, extra fingers, watermark…"
             hint="The model's default negative is merged in automatically."
-            :invalid="undErrors.length > 0"
-            :highlights="undErrors"
+            :errors="undErrors"
+            :spans="undLive.chunks.value"
+            :marks="undLive.marks.value"
           />
           <PromptIssues
             :errors="undErrors"

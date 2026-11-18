@@ -76,13 +76,13 @@ async function onRefPick(e: Event) {
         @click="emit('remove')"
       />
     </div>
-    <BaseInput
+    <PromptInput
       v-model="text"
-      type="textarea"
       size="small"
       placeholder="her own prompt…"
-      :invalid="errors.length > 0"
-      :highlights="errors"
+      :errors="errors"
+      :spans="live.chunks.value"
+      :marks="live.marks.value"
       :class="!enabled && 'opacity-45'"
     />
     <PromptIssues

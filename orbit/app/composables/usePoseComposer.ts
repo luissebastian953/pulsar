@@ -16,6 +16,18 @@ export function usePoseComposer() {
   const translate = useTranslate('pose')
   watch(posePrompt, t => translate.onInput(t, 'plain'))
 
+  // prompt chunks: the pose box takes `!macro:Name!` like any prompt field.
+  // /translate expands it (chunk text skips the LLM) and the tags join the
+  // strip below, so /generate is sent plain tags and needs no chunks.
+  const chunkStore = useChunks()
+  const poseLive = usePromptParse(() => posePrompt.value, 'prompt', () => '')
+  watch(() => JSON.stringify(chunkStore.referenced([posePrompt.value])), () => {
+    if (posePrompt.value.trim()) translate.onInput(posePrompt.value, 'plain')
+  })
+  onScopeDispose(chunkStore.registerField(async (edit) => {
+    posePrompt.value = await edit(posePrompt.value, 'prompt')
+  }))
+
   const GIRL_N = [0, 5000000, 1500000, 400000, 150000, 80000]
   const BOY_N = [0, 1700000, 350000, 90000, 40000, 20000]
 
@@ -231,7 +243,7 @@ export function usePoseComposer() {
 
   return {
     // composer
-    posePrompt, translate, camera, framing, figure, background, heldProps,
+    posePrompt, poseLive, translate, camera, framing, figure, background, heldProps,
     emptyHands, toggleProp, toggleEmptyHands, combined, stat,
     presetTurnaround, presetAction,
     // generation

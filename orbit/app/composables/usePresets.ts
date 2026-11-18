@@ -1,4 +1,5 @@
 import { useLocalStorage } from '@vueuse/core'
+import { effectScope, nextTick } from 'vue'
 import type { GenerationParams } from '~/types/api'
 import { userTagTexts } from '~/utils/prompt-issues'
 
@@ -59,6 +60,9 @@ export interface PresetConfig {
   i2i: PresetImage | null
   i2iStrength: number
   mask: PresetImage | null
+  // the prompt chunks the texts above reference (`!macro:Name!`), copied at
+  // save time so the config still works where those chunks are missing
+  chunks?: { name: string, content: string, color?: string }[]
 }
 
 // blobKeys lists every IndexedDB key a config owns, so deleting presets can
@@ -110,6 +114,40 @@ export function usePresets() {
   }
 
   return { presets, save, remove, rename }
+}
+
+// rewritePresetTexts applies a text edit to every prompt-bearing field of
+// every saved config (a chunk rename rewrites its `!macro:Old!` tokens).
+// `snap` edits the stored chunk copies. Untouched presets keep their identity.
+export function rewritePresetTexts(
+  edit: (text: string) => string,
+  snap: (chunks: NonNullable<PresetConfig['chunks']>) => NonNullable<PresetConfig['chunks']> = c => c,
+) {
+  // a short-lived storage ref in its own scope: it is stopped once the write
+  // has flushed, so repeated renames don't pile up listeners
+  const scope = effectScope(true)
+  const presets = scope.run(() => useLocalStorage<Preset[]>(STORAGE_KEY, []))!
+  nextTick(() => scope.stop())
+  let changed = false
+  const next = presets.value.map((p) => {
+    const c = p.config
+    const config: PresetConfig = {
+      ...c,
+      prompt: edit(c.prompt ?? ''),
+      tagList: (c.tagList ?? []).map(edit),
+      und: edit(c.und ?? ''),
+      chars: (c.chars ?? []).map(ch => ({ ...ch, text: edit(ch.text ?? '') })),
+      ...(c.chunks ? { chunks: snap(c.chunks) } : {}),
+    }
+
+    if (JSON.stringify(config) === JSON.stringify(c)) return p
+
+    changed = true
+
+    return { ...p, config }
+  })
+
+  if (changed) presets.value = next
 }
 
 // configSignature identifies "the same configuration" for saved-match detection

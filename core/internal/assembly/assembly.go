@@ -53,6 +53,10 @@ type Request struct {
 	Characters []Character `json:"characters,omitempty"`
 	// Loras apply a style/character LoRA on the spine (one for now).
 	Loras []Lora `json:"loras,omitempty"`
+	// Chunks are the prompt chunks this request's surfaces reference as
+	// `!macro:Name!` — request data, never stored: ParseRequest expands them
+	// and the Spec keeps the expanded tags, each with its chunk provenance.
+	Chunks []prompt.Chunk `json:"chunks,omitempty"`
 }
 
 type Lora struct {
@@ -333,21 +337,26 @@ func withField(field string, issues []prompt.Issue) []Notice {
 // CharacterField names a character prompt field in errors and notices.
 func CharacterField(i int) string { return fmt.Sprintf("characters.%d", i) }
 
-// ParseRequest parses the user's prompt surfaces (S1 step 2). Errors are
-// *FieldError.
+// ParseRequest parses the user's prompt surfaces (S1 step 2), expanding
+// the request's chunks in each: prompt, negative and every character (the
+// pose kind uses the same surfaces). Errors are *FieldError — one inside a
+// chunk is located on the reference — or a plain error for invalid chunks.
 func ParseRequest(req Request) (Parsed, error) {
 	var p Parsed
 	var err error
-	if p.Prompt, err = prompt.Parse(req.Prompt, prompt.Positive); err != nil {
+	if err = prompt.CheckChunks(req.Chunks); err != nil {
+		return Parsed{}, err
+	}
+	if p.Prompt, err = prompt.ParseWith(req.Prompt, prompt.Positive, req.Chunks); err != nil {
 		return Parsed{}, fieldErr("prompt", err)
 	}
 	p.Notices = append(p.Notices, withField("prompt", p.Prompt.Notices)...)
-	if p.Negative, err = prompt.Parse(req.Negative, prompt.Negative); err != nil {
+	if p.Negative, err = prompt.ParseWith(req.Negative, prompt.Negative, req.Chunks); err != nil {
 		return Parsed{}, fieldErr("negative", err)
 	}
 	p.Notices = append(p.Notices, withField("negative", p.Negative.Notices)...)
 	for i, c := range req.Characters {
-		cs, err := prompt.Parse(c.Prompt, prompt.Positive)
+		cs, err := prompt.ParseWith(c.Prompt, prompt.Positive, req.Chunks)
 		if err != nil {
 			return Parsed{}, fieldErr(CharacterField(i), err)
 		}

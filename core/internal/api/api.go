@@ -27,6 +27,7 @@ import (
 	"pulsar/core/internal/job"
 	"pulsar/core/internal/masks"
 	"pulsar/core/internal/nltag"
+	"pulsar/core/internal/pngmeta"
 	"pulsar/core/internal/prompt"
 	"pulsar/core/internal/style"
 	"pulsar/core/internal/tags"
@@ -696,6 +697,11 @@ func newUploadID() (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
+// maxServedImageBytes bounds the in-memory read on the serve path. Outputs
+// are PNGs of at most a hires-upscaled bucket; 64 MiB is far above any of
+// them and far below anything that would hurt.
+const maxServedImageBytes = 64 << 20
+
 func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !imageIDPattern.MatchString(id) {
@@ -708,9 +714,26 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
+	// Strip on the way out as well as in the worker: blobs stored before the
+	// worker strip existed still carry ComfyUI's graph chunk, and nothing
+	// that is not allow-listed leaves core. Fail closed — a blob that will
+	// not parse is not served. docs/compliance.md#output-metadata
+	data, err := io.ReadAll(io.LimitReader(rc, maxServedImageBytes+1))
+	if err == nil && len(data) > maxServedImageBytes {
+		err = fmt.Errorf("blob exceeds %d bytes", maxServedImageBytes)
+	}
+	if err == nil {
+		data, err = pngmeta.Strip(data)
+	}
+	if err != nil {
+		log.Printf("api: image %s: %v", id, err)
+		httpError(w, http.StatusInternalServerError, "image unavailable")
+		return
+	}
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
-	io.Copy(w, rc)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Write(data)
 }
 
 // GET /tags?q=&subset= — autocomplete over the tag DB; subset=pose grounds
