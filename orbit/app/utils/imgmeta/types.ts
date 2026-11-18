@@ -64,14 +64,18 @@ export interface CharacterPrompt {
 }
 
 /**
- * Pulsar's own download metadata: the JSON held by the `pulsar` iTXt chunk.
- * This is the contract the Go writer (core/internal/outmeta, Phase 4) must
- * match — JSON keys are exactly these names. Only user-authored values belong
- * here; see docs/compliance.md for what must never be written.
+ * Pulsar's own download metadata: the JSON held by the `pulsar` iTXt chunk
+ * of a `GET /images/{id}?meta=1` download. This is the contract with the Go
+ * writer (core/internal/outmeta, `Payload`) — JSON keys are exactly these
+ * names; the fields up to `kind` are always written, the rest only when the
+ * generation used them. Only user-authored values belong here; see
+ * docs/compliance.md#output-metadata for what must never be written (the
+ * safety and default negatives, quality and style text, upload ids, file
+ * paths, the job id).
  */
 export interface PulsarMetaV1 {
   v: 1
-  /** User prompt in the SD syntax the model received. */
+  /** User prompt in the SD syntax the model received (lineage-calibrated weights). */
   prompt: string
   /** User negative only — never the forbidden-tag or default negative. */
   negative: string
@@ -86,12 +90,29 @@ export interface PulsarMetaV1 {
   /** CFG rescale. */
   rescale: number
   seed: number
-  /** Model lineage, e.g. `illustrious` or `noobai-vpred`. */
+  /** Model lineage, e.g. `illustrious` or `noobai`. */
   lineage: string
   /** Style preset slug; empty when none. */
   style: string
   /** Job kind, e.g. `txt2img`, `img2img`, `inpaint`, `pose`. */
   kind: string
+  /** Base model display name — never a filename or path. */
+  model?: string
+  /** LoRAs by display name. */
+  loras?: { name: string, strength: number }[]
+  /** img2img / inpaint strength. */
+  denoise?: number
+  /** Refine-pass upscale factor and strength; absent without a refine pass. */
+  hires_scale?: number
+  hires_denoise?: number
+  /** Names of the prompt chunks the user's tags came from. */
+  chunks?: string[]
+  /**
+   * The same user text in the dialect the editor takes, with weights as
+   * typed. Import prefers it: `prompt`/`negative`/`characters` carry
+   * calibrated weights and would be calibrated a second time.
+   */
+  nai?: { prompt: string, negative: string, characters: string[] }
 }
 
 /** A model resource named in the metadata (LoRA, embedding, checkpoint). */

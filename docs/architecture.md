@@ -67,14 +67,16 @@ POST   /generate            → parse, validate, enqueue, 202 {job_id, notices};
                                400 {error, code, field, start, end, tag, hint} on a prompt parse error
 GET    /jobs/:id            → status + resolved params
 GET    /jobs/:id/stream     → SSE: queue pos → step progress → done|blocked
-GET    /images/:id          → stored output (…-lineart / …-skeleton for pose roles)
-POST   /uploads             → image ingest (img2img / references / inpaint base + mask)
+GET    /images/:id[?meta=1] → stored output (…-lineart / …-skeleton for pose roles), stripped, + the XMP AI-generated mark;
+                               ?meta=1 (downloads) adds the A1111 `parameters` and `pulsar` JSON chunks (docs/compliance.md#output-metadata)
+POST   /uploads             → image ingest (img2img / references / inpaint base + mask); PNG, JPEG or still WebP
 GET    /tags?q=&subset=     → autocomplete; subset=all|pose
 GET    /tags/lookup?q=      → one tag, DB then live Danbooru
 POST   /translate           → NL → grounded tags with weights + `prompt` in NovelAI syntax (parsed first; the LLM never sees operators);
                                {text, subset, chunks}: chunk text skips the LLM
-POST   /prompt/parse        → {text, surface, lineage, chunks} → tags/runs/weights, errors[], notices[],
-                               chunks[] (resolved references) and marks[] (typed weighting) (live validation; syntax only)
+POST   /prompt/parse        → {text, surface, lineage, chunks, clean} → tags/runs/weights, errors[], notices[],
+                               chunks[] (resolved references) and marks[] (typed weighting) (live validation; syntax only);
+                               clean=true (import): drops <lora:…>, embedding:…, |, ||…|| with notices, returns `cleaned`
 GET    /styles              → style presets per lineage (docs/tuning.md#style-presets)
 GET    /loras, /checkpoints → installed model files
 GET    /history             → user's generations; DELETE /history[/:id]

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"image"
 	"image/png"
@@ -15,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -233,7 +235,7 @@ func TestEndToEndDone(t *testing.T) {
 	}
 	img, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !bytes.Equal(img, e.fake.PNG) {
+	if resp.StatusCode != http.StatusOK || !bytes.Equal(withoutMark(t, "image", img, "txt2img"), e.fake.PNG) {
 		t.Errorf("image fetch = %d, %d bytes", resp.StatusCode, len(img))
 	}
 
@@ -291,7 +293,7 @@ func TestEndToEndPose(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET %s = %d", url, resp.StatusCode)
 		}
-		if !bytes.Equal(img, e.fake.OutputFor("node-"+node+".png")) {
+		if !bytes.Equal(withoutMark(t, role, img, "pose"), e.fake.OutputFor("node-"+node+".png")) {
 			t.Errorf("role %s did not come from node %s", role, node)
 		}
 	}
@@ -1187,5 +1189,92 @@ func TestStylesEndpoint(t *testing.T) {
 	}
 	if seen["hsr"] != 1 || seen["game-cg"] != 2 || seen["chibi"] != 2 {
 		t.Errorf("seed rows per slug = %v", seen)
+	}
+}
+
+// 12x8 lossless WebP (left red, right blue) — see ingest_test.go.
+const webpFixtureB64 = "UklGRigAAABXRUJQVlA4TBwAAAAvC8ABAA8wHvdQvRXy/EcLBAJJZvuTrRDR/8gB"
+
+// uploadChecker records what CheckUpload saw and can refuse it.
+type uploadChecker struct {
+	compliance.Stub
+	mu     sync.Mutex
+	seen   [][]byte
+	reject bool
+}
+
+func (u *uploadChecker) CheckUpload(_ context.Context, img []byte) (compliance.Decision, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.seen = append(u.seen, append([]byte{}, img...))
+	if u.reject {
+		return compliance.Decision{Reason: "test"}, nil
+	}
+	return compliance.Decision{Allowed: true}, nil
+}
+
+func (e *env) uploadBytes(t *testing.T, name string, data []byte) (int, string) {
+	t.Helper()
+	var form bytes.Buffer
+	mw := multipart.NewWriter(&form)
+	fw, _ := mw.CreateFormFile("image", name)
+	fw.Write(data)
+	mw.Close()
+	resp, err := http.Post(e.ts.URL+"/uploads", mw.FormDataContentType(), &form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var up struct {
+		ImageID string `json:"image_id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&up)
+	return resp.StatusCode, up.ImageID
+}
+
+// TestWebPUploadIsOneIngestPath: a WebP goes through POST /uploads like any
+// image — normalized to a bucket PNG, then CheckUpload on those normalized
+// bytes, fail closed — and works as an img2img base.
+func TestWebPUploadIsOneIngestPath(t *testing.T) {
+	chk := &uploadChecker{}
+	e := newEnv(t, "e2e_webp_upload", chk)
+	src, err := base64.StdEncoding.DecodeString(webpFixtureB64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, id := e.uploadBytes(t, "in.webp", src)
+	if status != http.StatusCreated || id == "" {
+		t.Fatalf("webp upload = %d", status)
+	}
+	if len(chk.seen) != 1 {
+		t.Fatalf("CheckUpload ran %d times, want 1", len(chk.seen))
+	}
+	stored, err := os.ReadFile(e.blobs.Root + "/" + id + ".png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the checker saw the normalized PNG that was stored, not the WebP
+	if !bytes.Equal(chk.seen[0], stored) || bytes.Contains(stored, []byte("WEBP")) {
+		t.Error("CheckUpload did not see the stored, normalized bytes")
+	}
+	if cfg, format, err := image.DecodeConfig(bytes.NewReader(stored)); err != nil || format != "png" || cfg.Width != 1216 || cfg.Height != 832 {
+		t.Errorf("stored blob = %s %dx%d (%v), want png 1216x832", format, cfg.Width, cfg.Height, err)
+	}
+	job := e.generate(t, `{"prompt": "1girl", "seed": 5, "kind": "img2img", "width": 1216, "height": 832, "image_id": "`+id+`"}`)
+	if v := e.waitTerminal(t, job); v.State != "done" {
+		t.Fatalf("img2img on a webp upload: state = %s (%s)", v.State, v.Error)
+	}
+
+	// a refused upload stores nothing
+	chk.reject = true
+	before, _ := os.ReadDir(e.blobs.Root)
+	if status, id := e.uploadBytes(t, "in.webp", src); status != http.StatusUnprocessableEntity || id != "" {
+		t.Errorf("rejected webp upload = %d %q, want 422", status, id)
+	}
+	if after, _ := os.ReadDir(e.blobs.Root); len(after) != len(before) {
+		t.Error("a rejected upload was stored")
+	}
+	if len(chk.seen) != 2 {
+		t.Errorf("CheckUpload ran %d times, want 2", len(chk.seen))
 	}
 }

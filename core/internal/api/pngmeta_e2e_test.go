@@ -1,6 +1,8 @@
 // Output metadata is a compliance surface (docs/compliance.md#output-metadata):
-// delivered bytes carry only allow-listed PNG chunks. These tests pin that on
-// both layers — the worker strip before CheckOutput and the serve-path strip.
+// delivered bytes carry only allow-listed PNG chunks, plus the one XMP
+// provenance mark core itself adds on the serve path. These tests pin that
+// on both layers — the worker strip before CheckOutput and the serve-path
+// strip. What `?meta=1` adds is pinned in outmeta_e2e_test.go.
 package api_test
 
 import (
@@ -20,6 +22,7 @@ import (
 
 	"pulsar/core/internal/comfy/comfytest"
 	"pulsar/core/internal/compliance"
+	"pulsar/core/internal/outmeta"
 	"pulsar/core/internal/pngmeta"
 	"pulsar/core/internal/tags"
 )
@@ -69,8 +72,53 @@ func fetch(t *testing.T, url string) (int, []byte) {
 	return resp.StatusCode, body
 }
 
-// assertClean fails if data carries anything but allow-listed chunks, any
-// safety term, or anything shaped like a blob/job id.
+// isProvenanceMark reports whether c is exactly the XMP packet core adds on
+// the serve path: an uncompressed iTXt chunk, keyed as the XMP spec says,
+// whose whole text is one of outmeta's two constant packets. Anything else
+// in an iTXt chunk is not the mark.
+func isProvenanceMark(c pngmeta.Chunk) bool {
+	key, text, ok := pngmeta.ITXtText(c)
+	return ok && key == outmeta.KeyXMP && (text == outmeta.XMP("txt2img") || text == outmeta.XMP("img2img"))
+}
+
+// withoutMark checks that served carries exactly one provenance mark, of
+// the source type wantKind implies, ahead of the pixel data — and returns
+// the bytes with it removed, for comparison with what was stored.
+func withoutMark(t *testing.T, what string, served []byte, wantKind string) []byte {
+	t.Helper()
+	chunks, err := pngmeta.Chunks(served)
+	if err != nil {
+		t.Fatalf("%s: not a png: %v", what, err)
+	}
+	marks, seenIDAT := 0, false
+	for _, c := range chunks {
+		if c.Type == "IDAT" {
+			seenIDAT = true
+		}
+		if !isProvenanceMark(c) {
+			continue
+		}
+		marks++
+		if seenIDAT {
+			t.Errorf("%s: provenance mark sits after the pixel data", what)
+		}
+		if _, text, _ := pngmeta.ITXtText(c); text != outmeta.XMP(wantKind) {
+			t.Errorf("%s: provenance mark has the wrong source type for kind %q", what, wantKind)
+		}
+	}
+	if marks != 1 {
+		t.Fatalf("%s: carries %d provenance marks, want exactly 1", what, marks)
+	}
+	out, err := pngmeta.Strip(served)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// assertClean fails if data carries anything but allow-listed chunks (and,
+// on served bytes, the provenance mark), any safety term, or anything
+// shaped like a blob/job id.
 func assertClean(t *testing.T, e *env, what string, data []byte) {
 	t.Helper()
 	chunks, err := pngmeta.Chunks(data)
@@ -78,7 +126,7 @@ func assertClean(t *testing.T, e *env, what string, data []byte) {
 		t.Fatalf("%s: not a png: %v", what, err)
 	}
 	for _, c := range chunks {
-		if !pngmeta.Allowed(c.Type) {
+		if !pngmeta.Allowed(c.Type) && !isProvenanceMark(c) {
 			t.Errorf("%s: carries a %s chunk", what, c.Type)
 		}
 	}
@@ -145,8 +193,13 @@ func TestDeliveredImagesCarryNoGraph(t *testing.T) {
 	if len(seen) != 1 {
 		t.Fatalf("CheckOutput ran %d times, want 1", len(seen))
 	}
-	if !bytes.Equal(seen[0], stored) || !bytes.Equal(served, stored) {
+	// (served = stored + the one provenance mark the serve path adds)
+	if !bytes.Equal(seen[0], stored) || !bytes.Equal(withoutMark(t, "served image", served, "img2img"), stored) {
 		t.Error("classified, stored and served bytes differ")
+	}
+	// the mark is added on the way out only: nothing at rest carries it
+	if bytes.Contains(stored, []byte(outmeta.KeyXMP)) {
+		t.Error("stored blob carries the serve-path mark")
 	}
 	// and the pixels are the ones comfy produced
 	if !bytes.Equal(stored, e.fake.PNG) {
@@ -175,6 +228,7 @@ func TestDeliveredPoseRolesCarryNoGraph(t *testing.T) {
 			t.Fatalf("GET %s = %d", url, status)
 		}
 		assertClean(t, e, role, served)
+		withoutMark(t, role, served, "pose")
 	}
 	seen := rec.outputs()
 	if len(seen) != len(v.Images) {
@@ -276,7 +330,8 @@ func TestLegacyBlobServedStripped(t *testing.T) {
 		t.Errorf("Content-Type = %q", got)
 	}
 	assertClean(t, e, "served legacy blob", served)
-	if !bytes.Equal(served, buf.Bytes()) {
+	// no job row: still marked, with the default source type
+	if !bytes.Equal(withoutMark(t, "served legacy blob", served, ""), buf.Bytes()) {
 		t.Error("served bytes are not the original image minus metadata")
 	}
 	got, err := png.Decode(bytes.NewReader(served))

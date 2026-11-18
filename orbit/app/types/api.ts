@@ -95,6 +95,10 @@ export type PromptParseResult = {
   chunks?: ChunkSpan[]
   marks?: PromptMark[]
   emitted: string
+  // only with `clean: true` (the import path): the text that was parsed,
+  // after core dropped what pulsar's grammar has no place for. Tag, error,
+  // chunk and mark offsets index THIS text; clean notices index the original.
+  cleaned?: string
 }
 
 // core's 400 for a prompt that failed to parse; `error` is the message

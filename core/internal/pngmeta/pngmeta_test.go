@@ -307,3 +307,96 @@ func FuzzRewrite(f *testing.F) {
 		}
 	})
 }
+
+func TestITXt(t *testing.T) {
+	base := basePNG(t)
+	text := "猫 <b>&\"quoted\"</b>\nline two — ünïcödé"
+	c, err := ITXt("pulsar", text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Type != "iTXt" || !bytes.Equal(c.Data, append([]byte("pulsar\x00\x00\x00\x00\x00"), text...)) {
+		t.Errorf("chunk = %q %q", c.Type, c.Data)
+	}
+	key, got, ok := ITXtText(c)
+	if !ok || key != "pulsar" || got != text {
+		t.Errorf("ITXtText = %q %q %v", key, got, ok)
+	}
+
+	// it rides through Rewrite ahead of the pixel data and survives a re-parse
+	out, err := Rewrite(base, Allowed, []Chunk{c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, err := Chunks(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at, idat := -1, -1
+	for i, ch := range cs {
+		if ch.Type == "iTXt" {
+			at = i
+		}
+		if ch.Type == "IDAT" && idat < 0 {
+			idat = i
+		}
+	}
+	if at < 1 || at > idat {
+		t.Errorf("iTXt at %d, first IDAT at %d", at, idat)
+	}
+	if _, got, ok := ITXtText(cs[at]); !ok || got != text {
+		t.Errorf("round trip = %q", got)
+	}
+	// and Strip takes it out again, restoring the input exactly
+	if back, err := Strip(out); err != nil || !bytes.Equal(back, base) {
+		t.Errorf("Strip(Rewrite(+iTXt)) != input: %v", err)
+	}
+	// the pixels are untouched
+	a, _ := png.Decode(bytes.NewReader(base))
+	b, err := png.Decode(bytes.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 3; y++ {
+		for x := 0; x < 4; x++ {
+			if a.At(x, y) != b.At(x, y) {
+				t.Fatalf("pixel (%d,%d) changed", x, y)
+			}
+		}
+	}
+
+	for name, kw := range map[string]string{
+		"empty": "", "too long": string(bytes.Repeat([]byte("k"), 80)), "leading space": " k", "trailing space": "k ",
+		"double space": "a  b", "nul": "a\x00b", "newline": "a\nb", "non-ascii": "clé",
+	} {
+		if _, err := ITXt(kw, "x"); err == nil {
+			t.Errorf("keyword %s accepted", name)
+		}
+	}
+	if _, err := ITXt(string(bytes.Repeat([]byte("k"), 79)), ""); err != nil {
+		t.Errorf("79-byte keyword and empty text: %v", err)
+	}
+	for name, bad := range map[string]string{"nul": "a\x00b", "invalid utf-8": "a\xffb"} {
+		if _, err := ITXt("k", bad); err == nil {
+			t.Errorf("text with %s accepted", name)
+		}
+	}
+
+	// ITXtText refuses what ITXt does not write
+	for name, ch := range map[string]Chunk{
+		"tEXt":       {Type: "tEXt", Data: []byte("k\x00v")},
+		"compressed": {Type: "iTXt", Data: []byte("k\x00\x01\x00\x00\x00v")},
+		"no keyword": {Type: "iTXt", Data: []byte("\x00\x00\x00\x00\x00v")},
+		"truncated":  {Type: "iTXt", Data: []byte("k\x00\x00")},
+		"no lang":    {Type: "iTXt", Data: []byte("k\x00\x00\x00lang")},
+		"empty":      {Type: "iTXt"},
+	} {
+		if _, _, ok := ITXtText(ch); ok {
+			t.Errorf("ITXtText accepted %s", name)
+		}
+	}
+	// language tag and translated keyword are skipped, not required empty
+	if k, v, ok := ITXtText(Chunk{Type: "iTXt", Data: []byte("k\x00\x00\x00en\x00clef\x00v")}); !ok || k != "k" || v != "v" {
+		t.Errorf("with language tag: %q %q %v", k, v, ok)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf16"
 
 	"pulsar/core/internal/assembly"
 	"pulsar/core/internal/compliance"
@@ -427,3 +428,151 @@ func TestTranslateWeights(t *testing.T) {
 		t.Errorf("translate parse error = %d %s", code, raw)
 	}
 }
+
+// TestPromptParseClean: the import path. `"clean": true` drops what
+// pulsar's grammar has no place for, with notices located in the original
+// text, and everything left is parsed exactly as typed text is.
+func TestPromptParseClean(t *testing.T) {
+	e := newEnv(t, "e2e_prompt_clean", compliance.Stub{})
+	type cleanResp struct {
+		parseResp
+		Cleaned *string `json:"cleaned"`
+	}
+	parse := func(body string) cleanResp {
+		t.Helper()
+		code, raw := postJSON(t, e.ts.URL+"/prompt/parse", body)
+		if code != http.StatusOK {
+			t.Fatalf("POST /prompt/parse %s = %d: %s", body, code, raw)
+		}
+		var out cleanResp
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	nais := func(r cleanResp) string {
+		var out []string
+		for _, tg := range r.Tags {
+			out = append(out, tg.NAI)
+		}
+		return strings.Join(out, "|")
+	}
+
+	rows := []struct {
+		name, text, surface string
+		wantTags            string
+		wantNotice          string
+		wantUncleanErr      string
+	}{
+		{"lora", `masterpiece, <lora:Acheron_v2:0.8>, (blue hair:1.2), smile`, "prompt",
+			"masterpiece|1.2::blue hair ::|smile", prompt.NoticeCleanedNetwork, prompt.CodeExtraNetwork},
+		{"embedding", `embedding:EasyNegative, lowres, (embedding:bad-hands-5:1.1)`, "negative",
+			"lowres", prompt.NoticeCleanedEmbedding, prompt.CodeEmbedding},
+		{"pipe", `red hair | blue eyes`, "prompt",
+			"red hair|blue eyes", prompt.NoticeCleanedPipe, prompt.CodePipe},
+		{"random", `1girl, ||red|blue|| dress, smile`, "character",
+			"1girl|dress|smile", prompt.NoticeCleanedRandom, prompt.CodePipe},
+		{"control", "1girl,\u0000 smile", "prompt",
+			"1girl|smile", prompt.NoticeCleanedControl, prompt.CodeControlChar},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			body, _ := json.Marshal(map[string]any{"text": row.text, "surface": row.surface})
+			// without clean it is an error, as before
+			plain := parse(string(body))
+			if _, ok := codes(plain.Errors)[row.wantUncleanErr]; !ok || plain.Cleaned != nil {
+				t.Fatalf("unclean: errors = %+v, cleaned = %v", plain.Errors, plain.Cleaned)
+			}
+			body, _ = json.Marshal(map[string]any{"text": row.text, "surface": row.surface, "clean": true})
+			out := parse(string(body))
+			if len(out.Errors) != 0 {
+				t.Fatalf("clean: errors = %+v", out.Errors)
+			}
+			if got := nais(out); got != row.wantTags {
+				t.Errorf("tags = %s, want %s", got, row.wantTags)
+			}
+			n, ok := codes(out.Notices)[row.wantNotice]
+			if !ok {
+				t.Fatalf("notices = %+v, want %s", out.Notices, row.wantNotice)
+			}
+			// the notice is located in the ORIGINAL text
+			if n.Start < 0 || n.End <= n.Start || n.End > len(utf16Units(row.text)) {
+				t.Errorf("notice span [%d,%d) outside the text", n.Start, n.End)
+			}
+			if out.Cleaned == nil || strings.ContainsAny(*out.Cleaned, "|<\x00") || strings.Contains(strings.ToLower(*out.Cleaned), "embedding:") {
+				t.Errorf("cleaned = %v", out.Cleaned)
+			}
+		})
+	}
+
+	// the notice span covers exactly what was dropped
+	out := parse(`{"text": "猫, <lora:x:1>, a", "clean": true}`)
+	if n := codes(out.Notices)[prompt.NoticeCleanedNetwork]; n.Start != 3 || n.End != 13 || n.Tag != 1 {
+		t.Errorf("network notice = %+v", n)
+	}
+	if out.Cleaned == nil || *out.Cleaned != "猫, , a" {
+		t.Errorf("cleaned = %v", out.Cleaned)
+	}
+
+	// clean forgives nothing else: real grammar errors stay errors, located
+	// in the cleaned text
+	out = parse(`{"text": "<lora:x:1>{unclosed, 1girl", "clean": true}`)
+	if _, ok := codes(out.Errors)[prompt.CodeUnclosedBracket]; !ok || len(out.Tags) != 0 {
+		t.Errorf("unclosed bracket after clean: %+v", out.Errors)
+	}
+	if e := out.Errors[0]; out.Cleaned == nil || e.Start != 0 || (*out.Cleaned)[e.Start] != '{' {
+		t.Errorf("error %+v should index the cleaned text %v", out.Errors[0], out.Cleaned)
+	}
+	// negative weights still relocate; chunks still expand
+	out = parse(`{"text": "1girl | -1::hat ::, !macro:L!", "clean": true, "chunks": [{"name": "L", "content": "rim light"}]}`)
+	if nais(out) != "1girl|rim light" || len(out.Relocated) != 1 || out.Relocated[0].Text != "hat" {
+		t.Errorf("tags = %s relocated = %+v", nais(out), out.Relocated)
+	}
+	// clean does not reach inside a chunk: its content is validated as saved
+	out = parse(`{"text": "!macro:L!", "clean": true, "chunks": [{"name": "L", "content": "a | b"}]}`)
+	if _, ok := codes(out.Errors)[prompt.CodePipe]; !ok {
+		t.Errorf("pipe inside a chunk must stay an error: %+v", out.Errors)
+	}
+}
+
+// TestCleanIsNoComplianceBypass: text that came through clean is ordinary
+// request text at /generate — CheckPrompt sees it, and /generate itself
+// has no clean mode.
+func TestCleanIsNoComplianceBypass(t *testing.T) {
+	rec := &recordChecker{}
+	e := newEnv(t, "e2e_clean_checked", rec)
+	type cleaned struct {
+		Tags []struct {
+			NAI string `json:"nai"`
+		} `json:"tags"`
+	}
+	code, raw := postJSON(t, e.ts.URL+"/prompt/parse", `{"text": "1girl, <lora:x:1>, red dress | smile", "clean": true}`)
+	if code != http.StatusOK {
+		t.Fatalf("parse = %d", code)
+	}
+	var c cleaned
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	var parts []string
+	for _, tg := range c.Tags {
+		parts = append(parts, tg.NAI)
+	}
+	body, _ := json.Marshal(map[string]any{"prompt": strings.Join(parts, ", "), "seed": 3})
+	id := e.generate(t, string(body))
+	if v := e.waitTerminal(t, id); v.State != "done" {
+		t.Fatalf("state = %s (%s)", v.State, v.Error)
+	}
+	if got := rec.last().Prompt; !strings.Contains(got, "1girl, red dress, smile") {
+		t.Errorf("CheckPrompt saw %q", got)
+	}
+	// /generate takes no clean flag (unknown field) and still rejects the raw text
+	if code, _ := postJSON(t, e.ts.URL+"/generate", `{"prompt": "1girl", "clean": true}`); code != http.StatusBadRequest {
+		t.Errorf("/generate with clean = %d, want 400", code)
+	}
+	if code, _ := postJSON(t, e.ts.URL+"/generate", `{"prompt": "1girl, <lora:x:1>"}`); code != http.StatusBadRequest {
+		t.Errorf("/generate with raw lora syntax = %d, want 400", code)
+	}
+}
+
+func utf16Units(s string) []uint16 { return utf16.Encode([]rune(s)) }

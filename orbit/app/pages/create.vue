@@ -27,10 +27,36 @@ const recentItems = recent.items
 // modal open flags — the only state the page itself owns
 const drawerOpen = ref(false)
 const saveOpen = ref(false)
+
+// Dropping an image onto the composer opens the same import dialog as
+// /inspect (docs/frontend.md#image-inspector). The file is only read here —
+// in the metadata worker — and is uploaded only if the dialog says to use it
+// as a base image or reference, through the composer's normal upload path.
+const IMPORT_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+const dropZone = useTemplateRef<HTMLElement>('dropZone')
+const dropMeta = useImageMeta()
+const dropFile = shallowRef<File | null>(null)
+const importOpen = ref(false)
+const { isOverDropZone } = useDropZone(dropZone, {
+  dataTypes: IMPORT_TYPES,
+  multiple: false,
+  onDrop: (files) => {
+    const f = files?.find(x => IMPORT_TYPES.includes(x.type))
+
+    if (!f) return
+
+    dropFile.value = f
+    importOpen.value = true
+    dropMeta.inspect(f)
+  },
+})
 </script>
 
 <template>
-  <main class="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+  <main
+    ref="dropZone"
+    class="relative flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden"
+  >
     <!-- composer rail -->
     <aside class="order-3 flex flex-none flex-col bg-surface md:order-1 md:h-full md:w-[372px] md:min-h-0 md:border-r md:border-line">
       <div class="min-h-0 p-4 md:flex-1 md:overflow-y-auto">
@@ -258,7 +284,7 @@ const saveOpen = ref(false)
               />Character reference
               <input
                 type="file"
-                accept="image/png,image/jpeg"
+                accept="image/png,image/jpeg,image/webp"
                 class="hidden"
                 @change="charRef.pick"
               >
@@ -341,10 +367,10 @@ const saveOpen = ref(false)
                 name="lucide:image-plus"
                 :size="14"
               />
-              choose an image (png / jpeg)
+              choose an image (png / jpeg / webp)
               <input
                 type="file"
-                accept="image/png,image/jpeg"
+                accept="image/png,image/jpeg,image/webp"
                 class="hidden"
                 @change="onI2iPick"
               >
@@ -625,6 +651,21 @@ const saveOpen = ref(false)
         />
       </template>
     </RecentStrip>
+
+    <div
+      v-if="isOverDropZone"
+      class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center border-2 border-dashed border-accent bg-void/80 text-sm text-text"
+      data-test="create-drop-overlay"
+    >
+      Drop to import its prompt or use the image
+    </div>
+    <MetaImportDialog
+      v-model:open="importOpen"
+      :file="dropFile"
+      :meta="dropMeta.meta.value"
+      :pending="dropMeta.pending.value"
+      :error="dropMeta.error.value"
+    />
 
     <PresetSaveDialog
       v-model:open="saveOpen"

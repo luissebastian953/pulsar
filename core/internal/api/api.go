@@ -27,6 +27,7 @@ import (
 	"pulsar/core/internal/job"
 	"pulsar/core/internal/masks"
 	"pulsar/core/internal/nltag"
+	"pulsar/core/internal/outmeta"
 	"pulsar/core/internal/pngmeta"
 	"pulsar/core/internal/prompt"
 	"pulsar/core/internal/style"
@@ -702,6 +703,16 @@ func newUploadID() (string, error) {
 // them and far below anything that would hurt.
 const maxServedImageBytes = 64 << 20
 
+// GET /images/{id}[?meta=1] — a stored blob, stripped and then marked.
+//
+// Every response carries exactly one piece of metadata that pulsar itself
+// writes: the XMP provenance packet (AI-generated, creator tool pulsar —
+// docs/compliance.md#output-metadata). It is a constant per job kind, so
+// the plain URL — the one <img> tags and thumbnails use — never carries a
+// prompt. `?meta=1` is the download: it adds the A1111 `parameters` text and
+// the `pulsar` JSON chunk, built at serve time from the job's stored params
+// by outmeta, which projects only what the user authored. Nothing written
+// here ever names the job, the image, an upload, or a file.
 func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !imageIDPattern.MatchString(id) {
@@ -723,7 +734,9 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 		err = fmt.Errorf("blob exceeds %d bytes", maxServedImageBytes)
 	}
 	if err == nil {
-		data, err = pngmeta.Strip(data)
+		// one pass: allow-list filter, then pulsar's own chunks. The add
+		// list is built from the job row only — never from the blob.
+		data, err = pngmeta.Rewrite(data, pngmeta.Allowed, s.imageMeta(r, id))
 	}
 	if err != nil {
 		log.Printf("api: image %s: %v", id, err)
@@ -734,6 +747,60 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.Write(data)
+}
+
+// imageMeta is the chunks handleImage adds to a stripped blob: always the
+// XMP mark, plus the two text payloads when the request asked for
+// `?meta=1` and the blob is a finished job's output.
+//
+// The image id is the job id plus an optional role suffix; the job row
+// gives the kind (which IPTC source type) and the params. A blob with no
+// job row — an upload, a mask, a legacy output whose row is gone — still
+// gets the mark, with the default source type: marking fails toward
+// "AI-generated", never toward unmarked. A lookup or build failure
+// degrades to the mark alone and never fails the image.
+func (s *Server) imageMeta(r *http.Request, id string) []pngmeta.Chunk {
+	const uuidLen = 36
+	kind := ""
+	var j *job.Job
+	if s.Store != nil && len(id) >= uuidLen {
+		got, err := s.Store.Get(r.Context(), id[:uuidLen])
+		switch {
+		case err == nil:
+			j, kind = got, got.Kind
+		case !errors.Is(err, job.ErrNotFound):
+			log.Printf("api: image metadata lookup: %v", err)
+		}
+	}
+	mark, err := pngmeta.ITXt(outmeta.KeyXMP, outmeta.XMP(kind))
+	if err != nil {
+		// a constant that will not encode is a build defect; serve unmarked
+		// rather than not at all, loudly
+		log.Printf("api: xmp mark: %v", err)
+		return nil
+	}
+	add := []pngmeta.Chunk{mark}
+	if r.URL.Query().Get("meta") != "1" || j == nil || j.State != job.StateDone {
+		return add
+	}
+	var spec assembly.Spec
+	if err := json.Unmarshal(j.Params, &spec); err != nil {
+		log.Printf("api: image metadata: stored params do not decode: %v", err)
+		return add
+	}
+	p := outmeta.FromSpec(spec, j.Kind)
+	js, err := outmeta.JSON(p)
+	if err != nil {
+		log.Printf("api: image metadata: %v", err)
+		return add
+	}
+	params, err1 := pngmeta.ITXt(outmeta.KeyParameters, outmeta.A1111(p))
+	own, err2 := pngmeta.ITXt(outmeta.KeyPulsar, js)
+	if err1 != nil || err2 != nil {
+		log.Printf("api: image metadata: %v %v", err1, err2)
+		return add
+	}
+	return append(add, params, own)
 }
 
 // GET /tags?q=&subset= — autocomplete over the tag DB; subset=pose grounds

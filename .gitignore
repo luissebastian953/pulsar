@@ -42,3 +42,18 @@ comfy/.extra_model_paths.yaml
 
 # dev-local compose override (native comfy/sentinel wiring)
 docker-compose.override.yml
+
+# eval identity references — third-party art fetched by eval/fetch-refs.py;
+# re-fetch locally, never redistribute
+eval/refs/
+# local scratch notes for pending benchmark runs
+eval/benchmarks/.pending-test
+
+# research working notes (quote third-party source); the reports/ they feed are tracked
+research_notes/
+
+# logs, coverage, browser-test output
+*.log
+coverage/
+orbit/test-results/
+orbit/playwright-report/
