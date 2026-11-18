@@ -68,13 +68,36 @@ type tagView2 struct {
 	Tag       int       `json:"tag"`
 	Runs      []runView `json:"runs"`
 	Relocated bool      `json:"relocated,omitempty"`
+	// Chunk: the tag came out of this chunk reference (start/end are then
+	// the reference's)
+	Chunk *prompt.ChunkRef `json:"chunk,omitempty"`
+}
+
+// chunkView is one resolved `!macro:Name!` in the parsed text: where the
+// token sits and what it expands to, so orbit can tint it, show the
+// expansion, and bake it into plain text without a grammar of its own.
+type chunkView struct {
+	Name  string `json:"name"`
+	Hash  string `json:"hash"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
+	Tag   int    `json:"tag"`
+	Text  string `json:"text"`
+}
+
+func viewChunks(refs []prompt.ChunkSpan) []chunkView {
+	out := make([]chunkView, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, chunkView{Name: r.Name, Hash: r.Hash, Start: r.Start, End: r.End, Tag: r.Index, Text: r.Text})
+	}
+	return out
 }
 
 func viewTags(ts []prompt.Tag) []tagView2 {
 	out := make([]tagView2, 0, len(ts))
 	for _, t := range ts {
 		v := tagView2{Text: t.Text, Name: t.Name, NAI: prompt.FormatTagNAI(t), Start: t.Span.Start, End: t.Span.End,
-			Tag: t.Span.Index, Relocated: t.Relocated}
+			Tag: t.Span.Index, Relocated: t.Relocated, Chunk: t.Chunk}
 		for _, r := range t.Runs {
 			v.Runs = append(v.Runs, runView{Text: r.Text, Weight: r.Weight, Emitted: r.Emitted})
 		}
@@ -86,14 +109,21 @@ func viewTags(ts []prompt.Tag) []tagView2 {
 // POST /prompt/parse — orbit's live validator: the same parser and lineage
 // calibration /generate uses, so orbit needs no second grammar. It checks
 // syntax only; the compliance policy (watch/complement lists) is never
-// exposed here.
+// exposed here. `chunks` in the request are the prompt chunks the text
+// references; the response locates every resolved reference (`chunks`) and
+// the typed weighting (`marks`, for the emphasis highlight).
 func (s *Server) handlePromptParse(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Text    string `json:"text"`
-		Surface string `json:"surface"`
-		Lineage string `json:"lineage"`
+		Text    string         `json:"text"`
+		Surface string         `json:"surface"`
+		Lineage string         `json:"lineage"`
+		Chunks  []prompt.Chunk `json:"chunks"`
 	}
-	if !decodeJSON(w, r, 64<<10, &req) {
+	if !decodeJSON(w, r, 512<<10, &req) {
+		return
+	}
+	if err := prompt.CheckChunks(req.Chunks); err != nil {
+		httpError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	var mode prompt.Mode
@@ -115,15 +145,18 @@ func (s *Server) handlePromptParse(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "unknown lineage "+lineage)
 		return
 	}
-	surf, errs := prompt.Analyze(req.Text, mode)
+	surf, refs, errs := prompt.AnalyzeWith(req.Text, mode, req.Chunks)
 	resp := struct {
 		Tags      []tagView2         `json:"tags"`
 		Relocated []tagView2         `json:"relocated"`
 		Errors    []prompt.Issue     `json:"errors"`
 		Notices   []prompt.Issue     `json:"notices"`
+		Chunks    []chunkView        `json:"chunks"`
+		Marks     []prompt.Mark      `json:"marks"`
 		Emitted   string             `json:"emitted"`
 		Cal       prompt.Calibration `json:"calibration"`
-	}{Tags: []tagView2{}, Relocated: []tagView2{}, Errors: []prompt.Issue{}, Notices: []prompt.Issue{}, Cal: cal}
+	}{Tags: []tagView2{}, Relocated: []tagView2{}, Errors: []prompt.Issue{}, Notices: []prompt.Issue{},
+		Chunks: viewChunks(refs), Marks: []prompt.Mark{}, Cal: cal}
 	if len(errs) > 0 {
 		resp.Errors = errs
 		writeJSON(w, http.StatusOK, resp)
@@ -139,6 +172,9 @@ func (s *Server) handlePromptParse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp.Emitted = emitted
+	if surf.Marks != nil {
+		resp.Marks = surf.Marks
+	}
 	resp.Tags = viewTags(surf.Tags)
 	resp.Relocated = viewTags(surf.Relocated)
 	writeJSON(w, http.StatusOK, resp)

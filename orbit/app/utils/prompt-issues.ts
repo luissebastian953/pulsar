@@ -1,9 +1,27 @@
 // Mapping core's prompt issues onto the composer's inputs. Core owns the
 // grammar (POST /prompt/parse); these helpers only locate its answers.
 // Offsets are UTF-16 code units — exactly JS string indices.
-import type { PromptErrorBody, PromptIssue, PromptTag } from '~/types/api'
+import type { ChunkSpan, PromptErrorBody, PromptIssue, PromptMark, PromptTag } from '~/types/api'
+import { OP_INTENSITY, emphasisIntensity, type ChunkColor } from '~/utils/chunks'
 
-export type Range = { start: number, end: number }
+// What a highlighted stretch is. `error` (the default) is a parse error;
+// `chunk` a resolved `!macro:Name!`; `up` / `down` / `op` the emphasis
+// highlight. Where they overlap the earlier kind here wins: an error is
+// never hidden, and a chunk token is painted as a chunk, not by weight.
+export type MarkKind = 'error' | 'chunk' | 'up' | 'down' | 'op'
+const PRIORITY: MarkKind[] = ['error', 'chunk', 'op', 'up', 'down']
+
+export type Range = {
+  start: number
+  end: number
+  kind?: MarkKind
+  /** up / down / op: tint strength, 0..1 */
+  intensity?: number
+  /** chunk: palette key */
+  color?: ChunkColor
+  /** chunk: what the token expands to (tooltip) */
+  title?: string
+}
 
 /** Where each chip sits in `chips.join(', ')` — the string core parsed. */
 export function chipSpans(chips: string[]): Range[] {
@@ -37,29 +55,65 @@ export function chipsWithIssues(chips: string[], issues: PromptIssue[]): Set<num
   return out
 }
 
-export type Segment = { text: string, mark: boolean }
+export type Segment = {
+  text: string
+  /** true for an error stretch (the red wavy mark) */
+  mark: boolean
+  kind?: MarkKind
+  intensity?: number
+  color?: ChunkColor
+  title?: string
+}
 
-/** Split text into marked/unmarked stretches for a highlight overlay. */
+/**
+ * Split text into stretches for a highlight overlay. Ranges may overlap;
+ * each stretch takes the highest-priority range covering it, and plain
+ * stretches carry no kind.
+ */
 export function segmentText(text: string, ranges: Range[]): Segment[] {
   const marks = ranges
-    .map(r => ({ start: Math.max(0, r.start), end: Math.min(text.length, r.end > r.start ? r.end : r.start + 1) }))
+    .map(r => ({ ...r, kind: r.kind ?? 'error' as MarkKind, start: Math.max(0, r.start), end: Math.min(text.length, r.end > r.start ? r.end : r.start + 1) }))
     .filter(r => r.end > r.start)
-    .sort((a, b) => a.start - b.start)
+
+  if (!marks.length) return text ? [{ text, mark: false }] : []
+
+  const cuts = [...new Set([0, text.length, ...marks.flatMap(r => [r.start, r.end])])].sort((a, b) => a - b)
   const out: Segment[] = []
-  let at = 0
-  for (const r of marks) {
-    const start = Math.max(r.start, at)
-    if (r.end <= start) continue
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const [a, b] = [cuts[i]!, cuts[i + 1]!]
+    const cover = marks.filter(r => r.start <= a && r.end >= b)
+      .sort((x, y) => PRIORITY.indexOf(x.kind) - PRIORITY.indexOf(y.kind) || x.start - y.start)[0]
+    const seg: Segment = cover
+      ? { text: text.slice(a, b), mark: cover.kind === 'error', kind: cover.kind }
+      : { text: text.slice(a, b), mark: false }
 
-    if (start > at) out.push({ text: text.slice(at, start), mark: false })
+    if (cover?.intensity !== undefined) seg.intensity = cover.intensity
 
-    out.push({ text: text.slice(start, r.end), mark: true })
-    at = r.end
+    if (cover?.color) seg.color = cover.color
+
+    if (cover?.title) seg.title = cover.title
+
+    const last = out[out.length - 1]
+
+    // merge neighbours painted by the same range kind (an error split by a cut)
+    if (last && last.kind === seg.kind && last.intensity === seg.intensity && last.color === seg.color && last.title === seg.title
+      && (seg.kind === undefined || seg.kind === 'error')) last.text += seg.text
+    else out.push(seg)
   }
 
-  if (at < text.length) out.push({ text: text.slice(at), mark: false })
-
   return out
+}
+
+/** core's emphasis marks as overlay ranges (decision D13). */
+export function emphasisRanges(marks: PromptMark[] | undefined): Range[] {
+  return (marks ?? [])
+    .map(m => ({ start: m.start, end: m.end, kind: m.kind, intensity: m.kind === 'op' ? OP_INTENSITY : emphasisIntensity(m.w) }))
+    .filter(r => r.intensity > 0)
+}
+
+/** core's resolved references as overlay ranges, in each chunk's colour. */
+export function chunkRanges(spans: ChunkSpan[] | undefined, colorOf: (name: string) => ChunkColor): Range[] {
+  return (spans ?? []).map(s => ({ start: s.start, end: s.end, kind: 'chunk' as const, color: colorOf(s.name), title: s.text }))
 }
 
 /** core's located 400 body from a failed $fetch, or null. */

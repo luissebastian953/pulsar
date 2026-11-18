@@ -4,7 +4,8 @@
 
 ```
 0. (client) translate: NL → grounded tags via POST /translate, weights kept
-1. parse every prompt surface (prompt, UC, each character) ──► 400 + span
+1. expand the request's prompt chunks (`!macro:Name!`), then parse every
+   prompt surface (prompt, UC, each character) ──────────► 400 + span
 2. validate + bounds-check (steps/res/batch caps); style lookup
 3. autoAnchor on parsed tags (post-cutoff characters)
 4. assemble: calibrate weights, relocate negative weights to UC, dedupe the
@@ -14,10 +15,47 @@
 7. enqueue: Postgres FOR UPDATE SKIP LOCKED
 8. route: least-busy ComfyUI process (one per GPU)
 9. execute: POST /prompt → WS progress → GET /view
-10. compliance: output classify (THE gate) ───► may set state=blocked
-11. store: object storage + resolved params row
-12. stream: SSE to client
+10. strip: pngmeta allow-list on every output ─► malformed PNG = state=failed
+11. compliance: output classify (THE gate) ───► may set state=blocked
+12. store: object storage + resolved params row (the bytes step 11 classified)
+13. stream: SSE to client
+14. serve: GET /images/:id strips again on the way out (legacy blobs)
 ```
+
+### Prompt chunks
+
+A chunk is a named snippet a prompt refers to as `!macro:Name!` (NovelAI's
+typeable form; zero tag names contain `!macro`). Core stores none: `/generate`,
+`/prompt/parse` and `/translate` take `chunks: [{name, content}]` — the ones
+the text references — and `prompt.Expand` splices them in before the scanner
+runs, on every user surface (prompt, negative, characters; pose included),
+never on a config or safety surface.
+
+- **Origin map.** Every expanded rune remembers the reference it came from,
+  so an error, notice or tag span inside a chunk is located on the token the
+  user typed (its UTF-16 span and its piece index); the message names the
+  chunk. `MaxBytes`/`MaxTags` apply after expansion (`too_long` on the field).
+- **Limits** (400 at decode): names trimmed, case-sensitive, unique, ≤ 64
+  chars, none of `! , | { } [ ] ::` or a line break; ≤ 64 chunks per request,
+  ≤ 4 KiB each. Nesting via `!macro:` inside content, depth ≤ 8.
+- **Located 400 codes**: `unknown_chunk`, `chunk_cycle`, `chunk_depth`,
+  `chunk_syntax` (a `!macro:` without a name or closing `!`). A token in
+  `QUALITY_TAGS`, `DEFAULT_UC`, a style row or `FORBIDDEN_TAG_UC` is
+  `chunk_in_config`: boot is refused.
+- **Compliance** needs no special case: expanded text becomes ordinary parsed
+  tags, and `CheckPrompt` re-parses the emitted strings exactly as for typed
+  text (`TestChunkTextInputsAreChecked`, `TestWatchedTagInChunkRejected`).
+- **History.** The Spec stores the expanded tags — the authoritative record —
+  and each tag that came whole out of a reference carries
+  `chunk: {name, hash}` (hash = first 16 hex of the sha256 of the chunk's
+  resolved text, nested chunks included). Chunk definitions are never stored.
+- **`/prompt/parse`** returns `chunks: [{name, hash, start, end, tag, text}]`
+  for every resolved reference (also when the text has errors) and
+  `marks: [{start, end, kind: up|down|op, w}]` locating the typed weighting
+  in NovelAI units; text that came out of a chunk is never marked.
+- **`/translate`** never sends chunk text to the LLM. Chunk tags are appended
+  after the grounded tags — as the reference itself where that is exact (so
+  `/generate` keeps provenance), written out with weights otherwise.
 
 Steps 1 and 4 are pure functions (`prompt`, `assembly`). Everything before step 7 is CPU-only and testable
 without a GPU — which is most of the interesting logic.
@@ -33,8 +71,10 @@ GET    /images/:id          → stored output (…-lineart / …-skeleton for po
 POST   /uploads             → image ingest (img2img / references / inpaint base + mask)
 GET    /tags?q=&subset=     → autocomplete; subset=all|pose
 GET    /tags/lookup?q=      → one tag, DB then live Danbooru
-POST   /translate           → NL → grounded tags with weights + `prompt` in NovelAI syntax (parsed first; the LLM never sees operators)
-POST   /prompt/parse        → {text, surface, lineage} → tags/runs/weights, errors[], notices[] (live validation; syntax only)
+POST   /translate           → NL → grounded tags with weights + `prompt` in NovelAI syntax (parsed first; the LLM never sees operators);
+                               {text, subset, chunks}: chunk text skips the LLM
+POST   /prompt/parse        → {text, surface, lineage, chunks} → tags/runs/weights, errors[], notices[],
+                               chunks[] (resolved references) and marks[] (typed weighting) (live validation; syntax only)
 GET    /styles              → style presets per lineage (docs/tuning.md#style-presets)
 GET    /loras, /checkpoints → installed model files
 GET    /history             → user's generations; DELETE /history[/:id]
@@ -124,6 +164,9 @@ See `.claude/skills/comfy-workflow/` before touching these.
   Per-process `input/` dir unless storage is shared: forward the upload to the
   process that will run the job.
 - **`compliance`** — two hooks. See `docs/compliance.md`.
+- **`pngmeta`** — pure, stdlib-only PNG chunk allow-list. Runs on every output
+  before `CheckOutput` and again in `GET /images/:id`; anything pulsar ever
+  writes into a PNG goes through it too. See `docs/compliance.md#output-metadata`.
 
 ## Storage
 

@@ -3,6 +3,7 @@ package prompt
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -56,11 +57,43 @@ type Surface struct {
 	// for the caller to append to the user negative.
 	Relocated []Tag
 	Notices   []Issue
+	// Marks locate the typed weighting for an editor's emphasis highlight
+	// (user surfaces only; text that came out of a chunk is never marked).
+	Marks []Mark
 }
 
-// Parse runs the scanner and returns the first error, if any.
+// Mark kinds: text weighted above 1, text weighted below 1 (negative and
+// zero included), and an operator (`{ } [ ]`, `N::`, `::`, SD parens).
+const (
+	MarkUp   = "up"
+	MarkDown = "down"
+	MarkOp   = "op"
+)
+
+// markEpsilon: a weight this close to 1 is not highlighted (NovelAI's rule).
+const markEpsilon = 0.01
+
+// Mark is one highlighted stretch of a surface: UTF-16 offsets, its kind,
+// and the NovelAI-unit weight in effect (for an operator, the weight it
+// sets or restores).
+type Mark struct {
+	Start  int     `json:"start"`
+	End    int     `json:"end"`
+	Kind   string  `json:"kind"`
+	Weight float64 `json:"w"`
+}
+
+// Parse runs the scanner and returns the first error, if any. A chunk
+// reference (`!macro:Name!`) is an unknown_chunk error here: use ParseWith
+// to supply the chunks.
 func Parse(text string, m Mode) (Surface, error) {
-	s, errs := Analyze(text, m)
+	return ParseWith(text, m, nil)
+}
+
+// ParseWith is Parse with the request's chunks: references are expanded
+// first, and every issue and span inside one lands on the reference.
+func ParseWith(text string, m Mode, chunks []Chunk) (Surface, error) {
+	s, _, errs := AnalyzeWith(text, m, chunks)
 	if len(errs) > 0 {
 		return Surface{}, &Error{errs[0]}
 	}
@@ -70,13 +103,30 @@ func Parse(text string, m Mode) (Surface, error) {
 // Analyze parses one surface and returns every error it found (capped),
 // for live validation. With errors the Surface is empty.
 func Analyze(text string, m Mode) (Surface, []Issue) {
+	s, _, errs := AnalyzeWith(text, m, nil)
+	return s, errs
+}
+
+// AnalyzeWith is Analyze with chunks. It also returns the references that
+// resolved — even when the surface has errors, so an editor keeps marking
+// them. MaxBytes and MaxTags apply to the expanded text.
+func AnalyzeWith(text string, m Mode, chunks []Chunk) (Surface, []ChunkSpan, []Issue) {
 	if len(text) > MaxBytes {
-		return Surface{}, []Issue{{
+		return Surface{}, nil, []Issue{{
 			Code: CodeTooLong, Message: fmt.Sprintf("prompt is too long (%d bytes; the limit is %d)", len(text), MaxBytes),
 			Hint: "Shorten the prompt", Start: 0, End: len(utf16.Encode([]rune(text))),
 		}}
 	}
-	s := newScanner(text, m)
+	exp, errs := expand(text, chunks, m)
+	if len(errs) > 0 {
+		return Surface{}, exp.Refs, errs
+	}
+	surf, errs := analyze(exp, m)
+	return surf, exp.Refs, errs
+}
+
+func analyze(exp Expansion, m Mode) (Surface, []Issue) {
+	s := newScanner(exp, m)
 	s.lex()
 	if len(s.errs) == 0 {
 		s.findSD()
@@ -120,10 +170,24 @@ type frame struct {
 	sectionWeight float64
 }
 
+// opSpan is one operator in the scanned text: rune range and the weight in
+// effect after it.
+type opSpan struct {
+	start, end int
+	w          float64
+}
+
 type scanner struct {
-	rs    []rune
-	u16   []int // UTF-16 offset of rune i; len(rs)+1 entries
-	piece []int // piece index of rune i
+	rs []rune
+	// Source geometry per scanned rune. For typed text these are the rune's
+	// own offsets; for a rune that came out of a chunk they are the whole
+	// reference's, so every issue and span lands on the token.
+	u16   []int // UTF-16 start offset of rune i; len(rs)+1 entries
+	u16e  []int // UTF-16 end offset of rune i
+	piece []int // piece index of rune i; len(rs)+1 entries
+	ref   []int // index into refs of the reference rune i came from; -1 typed
+	refs  []ChunkSpan
+	ops   []opSpan
 	mode  Mode
 
 	errs, notes []Issue
@@ -141,12 +205,15 @@ type scanner struct {
 	numRune []bool
 }
 
-func newScanner(text string, m Mode) *scanner {
-	rs := []rune(text)
+func newScanner(exp Expansion, m Mode) *scanner {
+	rs := []rune(exp.Text)
 	s := &scanner{
 		rs: rs, mode: m, w: 1,
 		u16:      make([]int, len(rs)+1),
+		u16e:     make([]int, len(rs)),
 		piece:    make([]int, len(rs)+1),
+		ref:      make([]int, len(rs)),
+		refs:     exp.Refs,
 		numRune:  make([]bool, len(rs)+1),
 		reported: map[int]bool{},
 		sd:       map[int]*sdGroup{},
@@ -154,21 +221,11 @@ func newScanner(text string, m Mode) *scanner {
 		base:     frame{section: -1},
 		wSrc:     [2]int{-1, -1},
 	}
-	off, p := 0, 0
-	for i, r := range rs {
-		s.u16[i] = off
-		s.piece[i] = p
-		if r >= 0x10000 && r <= unicode.MaxRune {
-			off += 2
-		} else {
-			off++
-		}
-		if r == ',' || r == '\n' {
-			p++
-		}
+	for i, o := range exp.Origin {
+		s.u16[i], s.u16e[i], s.piece[i], s.ref[i] = o.Start, o.End, o.Piece, o.Ref
 	}
-	s.u16[len(rs)] = off
-	s.piece[len(rs)] = p
+	s.u16[len(rs)] = exp.SrcLen
+	s.piece[len(rs)] = exp.SrcPieces
 	for i := 0; i+1 < len(rs); i++ {
 		if rs[i] == ':' && rs[i+1] == ':' {
 			for k := s.numBefore(i); k < i; k++ {
@@ -180,10 +237,38 @@ func newScanner(text string, m Mode) *scanner {
 	return s
 }
 
+// endOff is the UTF-16 offset where the rune range [start, end) ends.
+func (s *scanner) endOff(start, end int) int {
+	if end <= start {
+		return s.u16[start]
+	}
+	return s.u16e[end-1]
+}
+
+// chunkAt names the chunk rune i came out of, "" for typed text.
+func (s *scanner) chunkAt(i int) string {
+	if i >= 0 && i < len(s.ref) && s.ref[i] >= 0 {
+		return s.refs[s.ref[i]].Name
+	}
+	return ""
+}
+
+func inChunk(name, msg string) string {
+	if name == "" {
+		return msg
+	}
+	return "in chunk `" + name + "`: " + msg
+}
+
 func (s *scanner) issue(code, msg, hint string, start, end int) Issue {
 	start = max(0, min(start, len(s.rs)))
 	end = max(start, min(end, len(s.rs)))
-	return Issue{Code: code, Message: msg, Hint: hint, Start: s.u16[start], End: s.u16[end], Tag: s.piece[start]}
+	if code != CodeTooLong {
+		// a problem inside a chunk is located on the reference: say which
+		// chunk, since the text quoted isn't in the field
+		msg = inChunk(s.chunkAt(start), msg)
+	}
+	return Issue{Code: code, Message: msg, Hint: hint, Start: s.u16[start], End: s.endOff(start, end), Tag: s.piece[start]}
 }
 
 func (s *scanner) fail(code, msg, hint string, start, end int) {
@@ -442,6 +527,7 @@ func (s *scanner) scan() {
 		if g := s.sd[i]; g != nil {
 			s.push('(', i, g)
 			s.w, s.wSrc = g.w, [2]int{g.open, g.close + 1}
+			s.ops = append(s.ops, opSpan{g.open, g.open + 1, g.w}, opSpan{g.colon, g.close + 1, g.w})
 			s.note(NoticeConvertedSD, fmt.Sprintf("`%s` converted from SD syntax to weight %s", s.snippet(g.open, g.close+1), naiNum(g.w)),
 				"pulsar's syntax is `w::text ::`", g.open, g.close+1)
 			continue
@@ -471,6 +557,7 @@ func (s *scanner) scan() {
 				s.w /= bracketStep
 			}
 			s.wSrc = [2]int{i, i + 1}
+			s.ops = append(s.ops, opSpan{i, i + 1, s.w})
 		case r == '}' || r == ']':
 			if len(s.stack) == 0 {
 				s.fail(CodeStrayCloser, fmt.Sprintf("`%c` has no matching `%c`", r, opener(r)),
@@ -490,6 +577,7 @@ func (s *scanner) scan() {
 				continue
 			}
 			s.pop()
+			s.ops = append(s.ops, opSpan{i, i + 1, s.w})
 		case r == ':' && i+1 < len(rs) && rs[i+1] == ':':
 			s.colons(i)
 			i++
@@ -579,6 +667,7 @@ func (s *scanner) colons(i int) {
 		s.spacedNumberHint(i)
 		s.numberAfterHint(i)
 		s.w, s.wSrc = 1, [2]int{i, i + 2}
+		s.ops = append(s.ops, opSpan{i, i + 2, 1})
 		sc.section = -1
 		return
 	}
@@ -613,6 +702,7 @@ func (s *scanner) colons(i int) {
 	}
 	s.numberAfterHint(i)
 	s.w, s.wSrc = w, [2]int{j, i + 2}
+	s.ops = append(s.ops, opSpan{j, i + 2, w})
 	if w != 1 {
 		sc.section, sc.sectionEnd, sc.sectionText, sc.sectionWeight = j, i+2, false, w
 	} else {
@@ -696,10 +786,63 @@ func (s *scanner) build() Surface {
 	}
 	flush()
 	if n := len(surf.Tags) + len(surf.Relocated); n > MaxTags {
-		s.fail(CodeTooLong, fmt.Sprintf("too many tags (%d; the limit is %d)", n, MaxTags), "Shorten the prompt", 0, len(s.rs))
+		// counted after expansion, attributed to the whole field
+		s.errs = append(s.errs, Issue{Code: CodeTooLong, Message: fmt.Sprintf("too many tags (%d; the limit is %d)", n, MaxTags),
+			Hint: "Shorten the prompt", Start: 0, End: s.u16[len(s.rs)]})
 	}
 	surf.Notices = append(surf.Notices, s.notes...)
+	if s.mode == Positive || s.mode == Negative {
+		surf.Marks = s.marks()
+	}
 	return surf
+}
+
+// marks locates the typed weighting: every operator, and every stretch of
+// tag text whose weight is not 1. Runes that came out of a chunk are
+// skipped — a reference is painted as a chunk, never by emphasis.
+func (s *scanner) marks() []Mark {
+	var out []Mark
+	add := func(start, end int, kind string, w float64) {
+		if end > start {
+			out = append(out, Mark{Start: s.u16[start], End: s.u16e[end-1], Kind: kind, Weight: round6(w)})
+		}
+	}
+	for _, o := range s.ops {
+		// an operator is typed as a whole or not at all
+		if s.ref[o.start] < 0 {
+			add(o.start, o.end, MarkOp, o.w)
+		}
+	}
+	flush := func(run []entry) {
+		for len(run) > 0 && unicode.IsSpace(run[0].r) {
+			run = run[1:]
+		}
+		for len(run) > 0 && unicode.IsSpace(run[len(run)-1].r) {
+			run = run[:len(run)-1]
+		}
+		if len(run) == 0 {
+			return
+		}
+		kind := MarkDown
+		if run[0].w > 1 {
+			kind = MarkUp
+		}
+		add(run[0].src, run[len(run)-1].src+1, kind, run[0].w)
+	}
+	var run []entry
+	for _, e := range s.buf {
+		marked := !e.sep && s.ref[e.src] < 0 && math.Abs(e.w-1) >= markEpsilon
+		if n := len(run); n > 0 && (!marked || e.w != run[0].w || e.src != run[n-1].src+1) {
+			flush(run)
+			run = run[:0]
+		}
+		if marked {
+			run = append(run, e)
+		}
+	}
+	flush(run)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
+	return out
 }
 
 func (s *scanner) makeTag(es []entry) (Tag, bool) {
@@ -728,24 +871,46 @@ func (s *scanner) makeTag(es []entry) (Tag, bool) {
 	}
 	var t Tag
 	var sb, tb strings.Builder
-	cur := flat[0].w
-	for _, e := range flat {
+	cur, first := flat[0].w, 0
+	flush := func(end int) {
+		a, b := flat[first].src, flat[end-1].src
+		t.Runs = append(t.Runs, Run{Text: sb.String(), Weight: cur,
+			Span: Span{Start: s.u16[a], End: s.u16e[b], Index: s.piece[a]}})
+	}
+	for i, e := range flat {
 		if e.w != cur {
-			t.Runs = append(t.Runs, Run{Text: sb.String(), Weight: cur})
+			flush(i)
 			sb.Reset()
-			cur = e.w
+			cur, first = e.w, i
 		}
 		sb.WriteRune(e.r)
 		tb.WriteRune(e.r)
 	}
-	t.Runs = append(t.Runs, Run{Text: sb.String(), Weight: cur})
+	flush(len(flat))
 	t.Text = tb.String()
 	t.Name = Normalize(t.Text)
-	t.Span = Span{Start: s.u16[es[0].src], End: s.u16[es[len(es)-1].src+1], Index: s.piece[es[0].src]}
+	t.Span = Span{Start: s.u16[es[0].src], End: s.u16e[es[len(es)-1].src], Index: s.piece[es[0].src]}
+	// provenance: a tag every rune of which came out of one reference
+	if ref := s.ref[es[0].src]; ref >= 0 {
+		whole := true
+		for _, e := range es {
+			if s.ref[e.src] != ref {
+				whole = false
+				break
+			}
+		}
+		if whole {
+			c := s.refs[ref].ChunkRef
+			t.Chunk = &c
+		}
+	}
 	return t, true
 }
 
 func (s *scanner) tagIssue(t Tag, code, msg, hint string) Issue {
+	if t.Chunk != nil {
+		msg = inChunk(t.Chunk.Name, msg)
+	}
 	return Issue{Code: code, Message: msg, Hint: hint, Start: t.Span.Start, End: t.Span.End, Tag: t.Span.Index}
 }
 
@@ -811,6 +976,9 @@ func round6(w float64) float64 { return math.Round(w*1e6) / 1e6 }
 // — no brackets, parens, colons, escapes — so every safety tag is plain
 // text at exactly weight 1 (S3); otherwise boot is refused.
 func ParseSafety(text string) ([]Tag, error) {
+	if strings.Contains(text, ChunkPrefix) {
+		return nil, &Error{Issue{Code: CodeChunkInConfig, Message: "FORBIDDEN_TAG_UC must not contain a chunk reference"}}
+	}
 	for _, r := range text {
 		if strings.ContainsRune(`{}[]()\:|<`, r) {
 			return nil, &Error{Issue{Code: CodeSafetyOperator,

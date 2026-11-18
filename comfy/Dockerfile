@@ -38,6 +38,10 @@ EXPOSE 8188
 HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=5 \
   CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8188/system_stats', timeout=4)"
 
+# --disable-metadata: without it SaveImage writes the whole patched graph
+# (safety negative, model files, upload IDs) into every PNG. core strips
+# regardless (docs/compliance.md#output-metadata); this is the first layer.
 CMD ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188", \
      "--extra-model-paths-config", "extra_model_paths.yaml", \
-     "--output-directory", "/data/output", "--input-directory", "/data/input"]
+     "--output-directory", "/data/output", "--input-directory", "/data/input", \
+     "--disable-metadata"]

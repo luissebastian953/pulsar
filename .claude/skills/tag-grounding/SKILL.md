@@ -122,6 +122,22 @@ hatch for real-but-weak tags. `/translate` parses weights before the LLM and
 grounds each weighted stretch separately; the LLM never sees an operator
 (docs/tagdb.md#weighting).
 
+## Prompt chunks bypass autocomplete and the LLM
+
+A prompt chunk (`!macro:Name!`, docs/architecture.md#prompt-chunks) is the
+user's own tag text, saved under a name. Two rules follow:
+
+- **Never through the LLM.** `/translate` expands the references first; a tag
+  that came out of a chunk skips `Decompose` and the grounding cascade — it
+  is never rewritten and never dropped — and is appended after the grounded
+  tags (stage `chunk`; the tag DB is consulted only for its category and
+  count). Sending chunk content to the decomposer would re-interpret tags as
+  prose.
+- **Never through autocomplete.** While the `@` picker's query is in the box
+  the text is a chunk name: orbit must not send it to `/tags`,
+  `/tags/lookup` (live Danbooru) or `/translate`. A chunk chip is not a tag
+  and is not looked up for the resolved strip.
+
 ## One service, four boxes, two pages
 
 `nltag` serves base prompt, base UC, character prompt, and character UC — on both

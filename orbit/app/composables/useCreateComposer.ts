@@ -8,6 +8,8 @@ import { chipsWithIssues } from '~/utils/prompt-issues'
 // switches and dies on reload — exactly the previous in-page behaviour.
 export function useCreateComposer() {
   const api = useApi()
+  const chunkStore = useChunks()
+  const toast = useToast()
 
   // ── composer state ────────────────────────────────────────────────
   const prompt = ref('')
@@ -174,6 +176,11 @@ export function useCreateComposer() {
   watch([tagList, mode], () => {
     if (mode.value === 'tags') translate.onInput(tagList.value.join(', '), 'tags')
     else translate.onInput(prompt.value, 'plain')
+  })
+  // editing a chunk the prose references re-translates it (core expands
+  // chunks for /translate; their text never reaches the LLM)
+  watch(() => JSON.stringify(chunkStore.referenced([prompt.value])), () => {
+    if (mode.value === 'plain' && prompt.value.trim()) translate.onInput(prompt.value, 'plain')
   })
 
   // quality tags are applied server-side; the strip previews them so what
@@ -370,6 +377,11 @@ export function useCreateComposer() {
     const s = seedText.value.trim()
     if (/^\d+$/.test(s)) req.seed = Number(s)
 
+    // only the chunks this request references; core expands them and stores
+    // the expanded tags with their chunk provenance
+    const refs = chunkStore.referenced([req.prompt, req.negative ?? '', ...(req.characters ?? []).map(c => c.prompt)])
+    if (refs.length) req.chunks = refs
+
     job.start(req)
     for (let i = 1; i < batch.value; i++) extraJobs[i - 1]!.start(req)
   }
@@ -443,12 +455,21 @@ export function useCreateComposer() {
       i2i: i2iImg,
       i2iStrength: i2iStrength.value,
       mask: maskImg,
+      chunks: chunkStore.snapshot([prompt.value, tagList.value.join(', '), und.value, ...chars.value.map(c => c.text)]),
     }
   }
 
   async function applyConfig(cfg: PresetConfig) {
     // lineage first: its watcher resets sampler/guidance/steps/rescale, so let it
     // flush (nextTick) before writing the preset's own values, or they're clobbered.
+    // chunks first: the texts below may reference ones this browser lacks
+    const restored = chunkStore.restoreSnapshot(cfg.chunks)
+    if (restored.created.length) toast.show(`Restored prompt chunk${restored.created.length > 1 ? 's' : ''}: ${restored.created.join(', ')}`)
+
+    if (restored.mismatched.length) {
+      toast.show(`Your chunk${restored.mismatched.length > 1 ? 's' : ''} ${restored.mismatched.join(', ')} changed since this was saved — the current version is used`, 'warn', 7000)
+    }
+
     lineage.value = cfg.lineage ?? 'illustrious'
     await nextTick()
     // style second: its watcher writes the recipe's sampler profile, which the
@@ -559,6 +580,20 @@ export function useCreateComposer() {
     await applyConfig(c)
   }, { immediate: true })
 
+  // ── prompt chunks: the live fields a rename or a bake rewrites ─────
+  // registered here, not in the inputs, so a field that isn't on screen (the
+  // prose box while in tags mode, a folded character) is rewritten too
+  const unregisterFields = chunkStore.registerField(async (edit) => {
+    prompt.value = await edit(prompt.value, 'prompt')
+    const joined = tagList.value.join(', ')
+    const next = await edit(joined, 'prompt')
+    if (next !== joined) tagList.value = [...new Set(next.split(/[,\n]/).map(t => t.trim()).filter(Boolean))]
+
+    und.value = await edit(und.value, 'negative')
+    for (const c of chars.value) c.text = await edit(c.text, 'character')
+  })
+  onScopeDispose(unregisterFields)
+
   // ── fold badges ───────────────────────────────────────────────────
   const charBadge = computed(() =>
     chars.value.length ? `${chars.value.filter(c => c.enabled).length}/${chars.value.length} on` : 'none')
@@ -568,6 +603,8 @@ export function useCreateComposer() {
     prompt, mode, tagList, und, chars, translate, stripTags, charBadge,
     // prompt validation
     promptErrors, promptMarks, promptNotices, invalidChips, undErrors, undNotices, charServerErrors, charInvalid, charsInvalid,
+    // chunk references + emphasis marks core located in the live text
+    promptLive, undLive,
     // image
     aspect, batch, sizeTier, dims,
     // advanced

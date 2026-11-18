@@ -6,9 +6,11 @@
 //
 // invalid: red outline + red bold label. highlights (textarea only): UTF-16
 // ranges of the text to mark — drawn by a mirror layer behind a transparent
-// textarea, so the caret and selection stay native.
+// textarea, so the caret and selection stay native. A range's kind picks
+// the paint: error (red wavy, the default), chunk (the chunk's palette
+// colour), up / down / op (the emphasis tint at its intensity).
 import { computed, ref, useAttrs, type HTMLAttributes, type StyleValue } from 'vue'
-import { segmentText, type Range } from '~/utils/prompt-issues'
+import { segmentText, type Range, type Segment } from '~/utils/prompt-issues'
 
 export interface Props {
   label?: string
@@ -73,7 +75,15 @@ const mirror = ref<HTMLDivElement | null>(null)
 function syncScroll() {
   if (mirror.value && el.value) mirror.value.scrollTop = el.value.scrollTop
 }
-defineExpose({ focus: () => el.value?.focus() })
+defineExpose({ focus: () => el.value?.focus(), el })
+
+function segClass(seg: Segment) {
+  if (seg.mark) return 'rounded-sm bg-danger/30 underline decoration-danger decoration-wavy'
+
+  if (seg.kind === 'chunk') return 'chunk-color chunk-mark'
+
+  return seg.kind ? 'emph-mark' : undefined
+}
 </script>
 
 <template>
@@ -100,8 +110,11 @@ defineExpose({ focus: () => el.value?.focus() })
         <span
           v-for="(seg, i) in segments"
           :key="i"
-          :data-test="seg.mark ? 'input-mark' : undefined"
-          :class="seg.mark && 'rounded-sm bg-danger/30 underline decoration-danger decoration-wavy'"
+          :data-test="seg.mark ? 'input-mark' : seg.kind ? `input-mark-${seg.kind}` : undefined"
+          :data-kind="seg.kind"
+          :data-color="seg.color"
+          :class="segClass(seg)"
+          :style="seg.intensity !== undefined ? { '--emph': seg.intensity } : undefined"
         >{{ seg.text }}</span>
       </div>
       <textarea

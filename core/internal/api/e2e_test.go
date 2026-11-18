@@ -291,7 +291,7 @@ func TestEndToEndPose(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET %s = %d", url, resp.StatusCode)
 		}
-		if !bytes.HasSuffix(img, []byte("node-"+node+".png")) {
+		if !bytes.Equal(img, e.fake.OutputFor("node-"+node+".png")) {
 			t.Errorf("role %s did not come from node %s", role, node)
 		}
 	}

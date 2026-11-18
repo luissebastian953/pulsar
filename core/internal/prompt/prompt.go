@@ -59,6 +59,8 @@ type Run struct {
 	Text    string  `json:"text"`    // unescaped literal text
 	Weight  float64 `json:"w"`       // NovelAI units as parsed (|w| for relocated tags)
 	Emitted float64 `json:"emitted"` // after calibration — the weight ComfyUI receives
+	// Span locates the run in the surface it was parsed from; not stored.
+	Span Span `json:"-"`
 }
 
 // Tag is one comma/newline-separated piece of a surface. Weight can change
@@ -74,6 +76,11 @@ type Tag struct {
 	// Relocated marks a negative-weight tag moved from a positive surface
 	// into the user segment of the negative (decision 1).
 	Relocated bool `json:"relocated,omitempty"`
+	// Chunk is set when every rune of the tag came out of one chunk
+	// reference: the chunk's name and the hash of what it expanded to. The
+	// tag itself stays the authoritative, compliance-checked record;
+	// Equivalent ignores this.
+	Chunk *ChunkRef `json:"chunk,omitempty"`
 	// Span locates the tag in the surface it was parsed from; not stored.
 	Span Span `json:"-"`
 }

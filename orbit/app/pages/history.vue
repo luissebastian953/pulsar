@@ -25,6 +25,7 @@ const { presets, save: savePreset } = usePresets()
 const { presets: posePresets, save: savePosePreset } = usePosePresets()
 const pendingConfig = usePendingConfig()
 const pendingPoseConfig = usePendingPoseConfig()
+const chunkApi = useChunkApi()
 
 // stored structure when present (no ComfyUI escapes); legacy rows show the string
 function promptLine(j: JobPayload) {
@@ -73,7 +74,9 @@ async function useConfig() {
     return
   }
 
-  pendingConfig.value = paramsToPresetConfig(selected.value.params)
+  // chunk provenance: a stored tag run becomes its `!macro:Name!` again only
+  // where today's chunk still resolves to exactly those tags (decision D8)
+  pendingConfig.value = await chunkApi.restoreConfig(selected.value.params)
   await navigateTo('/create')
 }
 

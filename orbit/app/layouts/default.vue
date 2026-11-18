@@ -5,5 +5,6 @@
       <slot />
     </div>
     <BaseTabBar class="md:hidden" />
+    <AppToasts />
   </div>
 </template>
