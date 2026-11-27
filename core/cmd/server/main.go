@@ -14,12 +14,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"pulsar/core/internal/api"
+	"pulsar/core/internal/assembly"
 	"pulsar/core/internal/blob"
 	"pulsar/core/internal/comfy"
 	"pulsar/core/internal/compliance"
 	"pulsar/core/internal/dotenv"
 	"pulsar/core/internal/job"
 	"pulsar/core/internal/nltag"
+	"pulsar/core/internal/style"
 	"pulsar/core/internal/tags"
 	"pulsar/core/internal/worker"
 	"pulsar/core/internal/workflow"
@@ -55,12 +57,21 @@ func main() {
 		execTimeout  = envOr("EXEC_TIMEOUT", "5m")
 		corsOrigins  = envOr("CORS_ORIGINS", "*") // comma-separated; empty disables
 		forbiddenUC  = strings.TrimSpace(os.Getenv("FORBIDDEN_TAG_UC"))
+		qualityTags  = os.Getenv("QUALITY_TAGS")
+		defaultUC    = os.Getenv("DEFAULT_UC")
+		// optional: unset/empty disables the complement rules (docs/compliance.md)
+		complementTags = os.Getenv("AGE_COMPLEMENT_TAGS")
 	)
 
 	// fail closed — a deployment without the forbidden-tag negative does
 	// not run (CLAUDE.md non-negotiables)
 	if forbiddenUC == "" {
 		log.Fatalf("FORBIDDEN_TAG_UC must be set and non-empty — copy the value from .env.example; see docs/compliance.md")
+	}
+	// prompt config is parsed at boot with the request grammar; any error
+	// refuses boot, and FORBIDDEN_TAG_UC must be plain tags (no operators)
+	if err := assembly.CheckConfig(qualityTags, defaultUC, forbiddenUC); err != nil {
+		log.Fatalf("prompt config: %v (docs/tagdb.md#weighting)", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -193,8 +204,9 @@ func main() {
 			Grounder:   &nltag.Grounder{Store: tagStore, Live: live},
 		}
 	}
-	// output classification (docs/compliance.md); unset SENTINEL_URL = stub
-	var checker compliance.Checker = compliance.Stub{}
+	// output classification (docs/compliance.md); unset SENTINEL_URL = no
+	// output classifier, but the prompt policy needs no sidecar and always runs
+	var checker compliance.Checker = compliance.PromptGuard{Prompts: compliance.NewPrompts(forbiddenUC, complementTags)}
 	if sentinelURL := os.Getenv("SENTINEL_URL"); sentinelURL != "" {
 		threshold, sumGate := 0.0, 0.0
 		if v := os.Getenv("SENTINEL_BLOCK_THRESHOLD"); v != "" {
@@ -207,7 +219,7 @@ func main() {
 				log.Fatalf("invalid SENTINEL_SUM_THRESHOLD: %v", err)
 			}
 		}
-		checker = compliance.NewSentinel(sentinelURL, forbiddenUC, threshold, sumGate)
+		checker = compliance.NewSentinel(sentinelURL, forbiddenUC, complementTags, threshold, sumGate)
 	} else {
 		log.Printf("compliance: SENTINEL_URL not set — outputs are UNCLASSIFIED; do not expose publicly (docs/compliance.md)")
 	}
@@ -225,12 +237,12 @@ func main() {
 		Addr: ":" + port,
 		Handler: (&api.Server{
 			Store: store, Broker: broker, Checker: checker, Blobs: blobs,
-			Tags: tagStore, Live: live, Translator: translator, Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2Frag, IPAdapterCSFrag: ipaCSFrag, Regional2Frag: reg2Frag, HiresFrag: hiresFrag, LoraFrag: loraFrag, Lora2Frag: lora2Frag, VpredFrag: vpredFrag, LoraDir: envOr("LORA_DIR", "../comfy/models/loras"), CheckpointDir: envOr("CHECKPOINT_DIR", "../comfy/models/checkpoints"), Regional3Frag: reg3Frag,
+			Tags: tagStore, Live: live, Translator: translator, Styles: style.NewStore(pool), Tpl: tpl, PoseTpl: poseTpl, Img2ImgTpl: img2imgTpl, InpaintTpl: inpaintTpl, IPAdapterFrag: ipaFrag, IPAdapter2Frag: ipa2Frag, IPAdapterCSFrag: ipaCSFrag, Regional2Frag: reg2Frag, HiresFrag: hiresFrag, LoraFrag: loraFrag, Lora2Frag: lora2Frag, VpredFrag: vpredFrag, LoraDir: envOr("LORA_DIR", "../comfy/models/loras"), CheckpointDir: envOr("CHECKPOINT_DIR", "../comfy/models/checkpoints"), Regional3Frag: reg3Frag,
 			Cfg: api.Config{
 				Lineage: lineage, Checkpoint: checkpoint,
 				CORSOrigins:    splitNonEmpty(corsOrigins),
-				QualityTags:    os.Getenv("QUALITY_TAGS"),
-				DefaultUC:      os.Getenv("DEFAULT_UC"),
+				QualityTags:    qualityTags,
+				DefaultUC:      defaultUC,
 				ForbiddenTagUC: forbiddenUC,
 			},
 		}).Handler(),

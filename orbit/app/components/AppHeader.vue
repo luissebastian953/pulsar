@@ -6,6 +6,7 @@ const nav = [
   { to: '/create', label: 'Create', icon: 'lucide:sparkles' },
   { to: '/pose', label: 'Pose', icon: 'lucide:person-standing' },
   { to: '/history', label: 'History', icon: 'lucide:history' },
+  { to: '/inspect', label: 'Inspect', icon: 'lucide:scan-search' },
 ]
 </script>
 

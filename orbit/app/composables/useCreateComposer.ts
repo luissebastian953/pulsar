@@ -1,5 +1,7 @@
-import type { GenerationRequest, TranslatedTag } from '~/types/api'
-import { blobKeys, usePendingConfig, type Preset, type PresetConfig } from '~/composables/usePresets'
+import type { GenerationRequest, PromptIssue, StylePreset, TranslatedTag } from '~/types/api'
+import { blobKeys, usePendingConfig, usePendingImport, type Preset, type PresetConfig } from '~/composables/usePresets'
+import { applyMetaImport, type MetaImport } from '~/utils/meta-import'
+import { chipsWithIssues } from '~/utils/prompt-issues'
 
 // The whole /create composer: state, lineage rules, uploads, generation, and
 // preset capture/apply. The page owns only template wiring and modal open
@@ -7,6 +9,8 @@ import { blobKeys, usePendingConfig, type Preset, type PresetConfig } from '~/co
 // switches and dies on reload — exactly the previous in-page behaviour.
 export function useCreateComposer() {
   const api = useApi()
+  const chunkStore = useChunks()
+  const toast = useToast()
 
   // ── composer state ────────────────────────────────────────────────
   const prompt = ref('')
@@ -64,6 +68,35 @@ export function useCreateComposer() {
     return list.find(c => ckptIsVpred(c) === wantVpred) ?? current
   }
 
+  // ── style presets ─────────────────────────────────────────────────
+  // Server-side recipes (GET /styles): prompt carriers, finish tags, negative
+  // and LoRA merge in core. The sampler profile is written into the visible
+  // fields here so what the user sees is what runs — core lets request values
+  // win, so the fields stay editable after a style is picked.
+  const styles = ref<StylePreset[]>([])
+  const styleSlug = ref('')
+  const stylesForLineage = computed(() => styles.value.filter(s => s.lineage === lineage.value))
+  const activeStyle = computed(() => stylesForLineage.value.find(s => s.slug === styleSlug.value))
+  // a style's LoRA takes the second LoRA slot in core (two-LoRA cap)
+  const styleHasLora = computed(() => !!activeStyle.value?.lora)
+
+  function applyStyleSettings(s: StylePreset | undefined) {
+    const d = LINEAGE_DEFAULTS[lineage.value]
+    steps.value = s?.steps ?? d.steps
+    guidance.value = s?.cfg ?? d.guidance
+    sampler.value = s?.sampler ?? d.sampler
+    scheduler.value = s?.scheduler ?? d.scheduler
+    cfgRescale.value = s?.cfg_rescale ?? d.rescale
+    if (s?.hires != null) sizeTier.value = s.hires ? ((s.hires_scale ?? 1.5) >= 2 ? 'ultra' : 'large') : 'normal'
+    else if (!s) sizeTier.value = 'normal'
+  }
+  watch(styleSlug, (slug, prev) => {
+    // '' → '' happens when a preset without a style loads; nothing to reset
+    if (!slug && !prev) return
+
+    applyStyleSettings(activeStyle.value)
+  })
+
   watch(lineage, (l) => {
     const d = LINEAGE_DEFAULTS[l]
     steps.value = d.steps
@@ -72,6 +105,10 @@ export function useCreateComposer() {
     scheduler.value = d.scheduler
     cfgRescale.value = d.rescale
     activeCheckpoint.value = pickCheckpoint(l, checkpoints.value, activeCheckpoint.value)
+    // a style is a per-lineage recipe: keep the slug if the new lineage has a
+    // row for it (and re-apply that row over the reset), otherwise drop it
+    if (styleSlug.value && !stylesForLineage.value.some(s => s.slug === styleSlug.value)) styleSlug.value = ''
+    else if (styleSlug.value) applyStyleSettings(activeStyle.value)
   })
 
   const loraName = ref('')
@@ -80,7 +117,7 @@ export function useCreateComposer() {
   const lora2Name = ref('')
   const lora2Strength = ref(0.65)
 
-  const folds = reactive({ und: false, chars: false, ref: false, i2i: false, adv: false })
+  const folds = reactive({ style: false, und: false, chars: false, ref: false, i2i: false, adv: false })
 
   // pose → create handoff ("Use this pose")
   const poseRef = useState<{ seed: string, label: string } | null>('poseRef', () => null)
@@ -141,6 +178,11 @@ export function useCreateComposer() {
     if (mode.value === 'tags') translate.onInput(tagList.value.join(', '), 'tags')
     else translate.onInput(prompt.value, 'plain')
   })
+  // editing a chunk the prose references re-translates it (core expands
+  // chunks for /translate; their text never reaches the LLM)
+  watch(() => JSON.stringify(chunkStore.referenced([prompt.value])), () => {
+    if (mode.value === 'plain' && prompt.value.trim()) translate.onInput(prompt.value, 'plain')
+  })
 
   // quality tags are applied server-side; the strip previews them so what
   // you see is what gets sent (values mirror the Illustrious lineage list)
@@ -176,8 +218,10 @@ export function useCreateComposer() {
     chars.value.filter(c => c.enabled && c.text.trim()))
 
   const promptText = computed(() => {
+    // plain mode sends core's NovelAI-syntax rendering of the grounded tags
+    // (weights kept); older cores without it fall back to bare names
     const base = mode.value === 'plain'
-      ? translate.tags.value.map(t => t.canonical)
+      ? (translate.nai.value ? [translate.nai.value] : translate.tags.value.map(t => t.canonical))
       : tagList.value
     // 2-3 characters go regional (each prompt conditions its own column);
     // a single character just merges into the prompt
@@ -190,8 +234,93 @@ export function useCreateComposer() {
   const cost = computed(() =>
     batch.value * (17 + (sizeTier.value === 'ultra' ? 16 : hires.value ? 8 : 0)))
 
+  // ── prompt validation (docs/frontend.md#prompt-validation) ──────────
+  // Live: debounced POST /prompt/parse per surface. Server: /generate's
+  // located 400, shown while the field's text is what was sent.
+  const promptSurfaceText = computed(() => (mode.value === 'tags' ? tagList.value.join(', ') : prompt.value))
+  const promptLive = usePromptParse(() => promptSurfaceText.value, 'prompt', () => lineage.value)
+  const undLive = usePromptParse(() => und.value, 'negative', () => lineage.value)
+
+  // what the last /generate sent, to map its 400 back onto a field
+  const sent = ref<{ mode: 'plain' | 'tags', chips: string, und: string, regional: { idx: number, text: string }[], merged: { idx: number, text: string } | null } | null>(null)
+
+  const serverIssues = computed(() => {
+    const out = { prompt: [] as PromptIssue[], promptMarks: [] as PromptIssue[], negative: [] as PromptIssue[], chars: {} as Record<number, PromptIssue[]> }
+    const iss = job.issue.value
+    const s = sent.value
+    if (!iss || !s) return out
+
+    if (iss.field === 'negative' && und.value === s.und) out.negative = [iss]
+    else if (iss.field.startsWith('characters.')) {
+      const r = s.regional[Number(iss.field.slice('characters.'.length))]
+      if (r && chars.value[r.idx]?.text.trim() === r.text) out.chars[r.idx] = [iss]
+    }
+    else if (iss.field === 'prompt') {
+      if (s.mode === 'plain') {
+        // offsets index core's rendering, not the prose: message only
+        if (prompt.value && mode.value === 'plain') out.prompt = [iss]
+      }
+      else if (s.merged && (s.chips === '' || iss.start >= s.chips.length + 2)) {
+        // a single character merges into the prompt: shift into its card
+        const shift = s.chips.length ? s.chips.length + 2 : 0
+        if (chars.value[s.merged.idx]?.text.trim() === s.merged.text) {
+          out.chars[s.merged.idx] = [{ ...iss, start: iss.start - shift, end: iss.end - shift }]
+        }
+      }
+      else if (tagList.value.join(', ') === s.chips && mode.value === 'tags') {
+        out.prompt = [iss]
+        out.promptMarks = [iss]
+      }
+    }
+
+    return out
+  })
+
+  const promptErrors = computed(() => {
+    if (promptLive.errors.value.length) return promptLive.errors.value
+
+    if (mode.value === 'plain' && translate.issue.value) return [translate.issue.value]
+
+    return serverIssues.value.prompt
+  })
+  const promptMarks = computed(() => {
+    if (promptLive.errors.value.length) return promptLive.errors.value
+
+    if (mode.value === 'plain' && translate.issue.value) return [translate.issue.value]
+
+    return serverIssues.value.promptMarks
+  })
+  const promptNotices = computed(() => promptLive.notices.value)
+  const invalidChips = computed(() => [...chipsWithIssues(tagList.value, promptMarks.value)])
+  const undErrors = computed(() => (undLive.errors.value.length ? undLive.errors.value : serverIssues.value.negative))
+  const undNotices = computed(() => undLive.notices.value)
+  const charServerErrors = (i: number) => serverIssues.value.chars[i] ?? []
+  // per-card validity reported by CharacterCard (its live parse lives there)
+  const charInvalid = reactive<Record<number, boolean>>({})
+  const charsInvalid = computed(() =>
+    chars.value.some((_, i) => charInvalid[i]) || Object.keys(serverIssues.value.chars).length > 0)
+
+  // a 400 inside a folded section opens it, so the mark is visible
+  watch(() => job.issue.value, (iss) => {
+    if (iss?.field === 'negative') folds.und = true
+
+    if (iss?.field.startsWith('characters.') || (iss?.field === 'prompt' && sent.value?.merged)) folds.chars = true
+  })
+
   function generate() {
     if (job.busy.value || !promptText.value) return
+
+    const regionalOn = activeChars.value.length >= 2 && activeChars.value.length <= 3
+    const active = chars.value
+      .map((c, idx) => ({ idx, text: c.text.trim(), on: c.enabled && !!c.text.trim() }))
+      .filter(c => c.on)
+    sent.value = {
+      mode: mode.value,
+      chips: tagList.value.join(', '),
+      und: und.value,
+      regional: regionalOn ? active.map(({ idx, text }) => ({ idx, text })) : [],
+      merged: !regionalOn && active.length === 1 ? { idx: active[0]!.idx, text: active[0]!.text } : null,
+    }
 
     const [width, height] = dims.value
     const req: GenerationRequest = {
@@ -215,6 +344,8 @@ export function useCreateComposer() {
     }
 
     if (activeCheckpoint.value) req.checkpoint = activeCheckpoint.value
+
+    if (styleSlug.value) req.style = styleSlug.value
 
     req.lineage = lineage.value
     if (lineage.value === 'noobai') req.cfg_rescale = cfgRescale.value
@@ -247,6 +378,11 @@ export function useCreateComposer() {
     const s = seedText.value.trim()
     if (/^\d+$/.test(s)) req.seed = Number(s)
 
+    // only the chunks this request references; core expands them and stores
+    // the expanded tags with their chunk provenance
+    const refs = chunkStore.referenced([req.prompt, req.negative ?? '', ...(req.characters ?? []).map(c => c.prompt)])
+    if (refs.length) req.chunks = refs
+
     job.start(req)
     for (let i = 1; i < batch.value; i++) extraJobs[i - 1]!.start(req)
   }
@@ -265,6 +401,8 @@ export function useCreateComposer() {
       // default lineage is NoobAI (v-pred); pair it with a matching checkpoint so
       // the first generation doesn't hit core's lineage/checkpoint mismatch guard
       activeCheckpoint.value = pickCheckpoint(lineage.value, ck.checkpoints, ck.active)
+      const st = await api.get<{ styles: StylePreset[] }>('/styles')
+      styles.value = st.styles
     }
     catch { /* no loras endpoint or none installed */ }
   })
@@ -308,6 +446,7 @@ export function useCreateComposer() {
       loraStrength: loraStrength.value,
       lora2Name: lora2Name.value,
       lora2Strength: lora2Strength.value,
+      style: styleSlug.value,
       charRef: charRefImg,
       charRefMode: charRefMode.value,
       charRefStrength: charRefStrength.value,
@@ -317,13 +456,26 @@ export function useCreateComposer() {
       i2i: i2iImg,
       i2iStrength: i2iStrength.value,
       mask: maskImg,
+      chunks: chunkStore.snapshot([prompt.value, tagList.value.join(', '), und.value, ...chars.value.map(c => c.text)]),
     }
   }
 
   async function applyConfig(cfg: PresetConfig) {
     // lineage first: its watcher resets sampler/guidance/steps/rescale, so let it
     // flush (nextTick) before writing the preset's own values, or they're clobbered.
+    // chunks first: the texts below may reference ones this browser lacks
+    const restored = chunkStore.restoreSnapshot(cfg.chunks)
+    if (restored.created.length) toast.show(`Restored prompt chunk${restored.created.length > 1 ? 's' : ''}: ${restored.created.join(', ')}`)
+
+    if (restored.mismatched.length) {
+      toast.show(`Your chunk${restored.mismatched.length > 1 ? 's' : ''} ${restored.mismatched.join(', ')} changed since this was saved — the current version is used`, 'warn', 7000)
+    }
+
     lineage.value = cfg.lineage ?? 'illustrious'
+    await nextTick()
+    // style second: its watcher writes the recipe's sampler profile, which the
+    // preset's own values below must override
+    styleSlug.value = cfg.style ?? ''
     await nextTick()
 
     prompt.value = cfg.prompt ?? ''
@@ -401,6 +553,7 @@ export function useCreateComposer() {
       c.i2i ? 'img2img' : '',
       c.charRef ? 'reference' : '',
       c.loraName ? 'lora' : '',
+      c.style ? `style · ${c.style}` : '',
     ].filter(Boolean).join(' · ')
   }
   const drawerPresets = computed(() =>
@@ -428,6 +581,54 @@ export function useCreateComposer() {
     await applyConfig(c)
   }, { immediate: true })
 
+  // ── import from an inspected image (docs/frontend.md#image-inspector) ──
+  // A partial patch: only what the dialog's toggles asked for is written,
+  // and never guidance, sampler, schedule or rescale. The text lands in the
+  // normal editor fields, so it is validated live and checked at /generate
+  // like anything typed. Images go through the one upload path.
+  async function applyImport(p: MetaImport) {
+    applyMetaImport({ mode, tagList, und, chars, aspect, steps, seedText }, p)
+
+    if (p.und !== undefined) folds.und = !!und.value.trim()
+
+    if (p.chars !== undefined) folds.chars = chars.value.length > 0
+
+    if (p.steps !== undefined || p.seedText !== undefined) folds.adv = true
+
+    if (p.baseImage) {
+      maskId.value = ''
+      folds.i2i = true
+      await i2i.upload(p.baseImage)
+    }
+
+    if (p.reference) {
+      folds.ref = true
+      await charRef.upload(p.reference)
+    }
+  }
+
+  const pendingImport = usePendingImport()
+  watch(pendingImport, async (p) => {
+    if (!p) return
+
+    pendingImport.value = null
+    await applyImport(p)
+  }, { immediate: true })
+
+  // ── prompt chunks: the live fields a rename or a bake rewrites ─────
+  // registered here, not in the inputs, so a field that isn't on screen (the
+  // prose box while in tags mode, a folded character) is rewritten too
+  const unregisterFields = chunkStore.registerField(async (edit) => {
+    prompt.value = await edit(prompt.value, 'prompt')
+    const joined = tagList.value.join(', ')
+    const next = await edit(joined, 'prompt')
+    if (next !== joined) tagList.value = [...new Set(next.split(/[,\n]/).map(t => t.trim()).filter(Boolean))]
+
+    und.value = await edit(und.value, 'negative')
+    for (const c of chars.value) c.text = await edit(c.text, 'character')
+  })
+  onScopeDispose(unregisterFields)
+
   // ── fold badges ───────────────────────────────────────────────────
   const charBadge = computed(() =>
     chars.value.length ? `${chars.value.filter(c => c.enabled).length}/${chars.value.length} on` : 'none')
@@ -435,12 +636,18 @@ export function useCreateComposer() {
   return {
     // describe
     prompt, mode, tagList, und, chars, translate, stripTags, charBadge,
+    // prompt validation
+    promptErrors, promptMarks, promptNotices, invalidChips, undErrors, undNotices, charServerErrors, charInvalid, charsInvalid,
+    // chunk references + emphasis marks core located in the live text
+    promptLive, undLive,
     // image
     aspect, batch, sizeTier, dims,
     // advanced
     lineage, cfgRescale, checkpoints, activeCheckpoint, steps, guidance,
     seedText, sampler, scheduler, qualityTags, faceDetail,
     loras, loraName, loraStrength, lora2Name, lora2Strength,
+    // style presets
+    stylesForLineage, styleSlug, activeStyle, styleHasLora,
     // reference + pose handoff
     charRef, charRefMode, charRefStrength, charRefFidelity, poseRef, refStrength,
     // img2img / inpaint

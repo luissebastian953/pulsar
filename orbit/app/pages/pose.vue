@@ -11,7 +11,7 @@ definePageMeta({ keepalive: true })
 const api = useApi()
 
 const {
-  posePrompt, translate, camera, framing, figure, background, heldProps,
+  posePrompt, poseLive, translate, camera, framing, figure, background, heldProps,
   emptyHands, toggleProp, toggleEmptyHands, combined, stat,
   presetTurnaround, presetAction,
   cells, selected, tab, busy, anyDone, generate, usePose,
@@ -68,13 +68,25 @@ function onDetailSaveName(name: string) {
     <!-- composer rail -->
     <aside class="order-3 flex flex-none flex-col bg-surface md:order-1 md:h-full md:w-[372px] md:min-h-0 md:border-r md:border-line">
       <div class="min-h-0 p-4 md:flex-1 md:overflow-y-auto">
-        <BaseSectionLabel class="mb-2.5">
-          Pose
-        </BaseSectionLabel>
-        <BaseInput
+        <div class="mb-2.5 flex items-center gap-1.5">
+          <BaseSectionLabel
+            class="flex-1"
+            :invalid="poseLive.errors.value.length > 0"
+          >
+            Pose
+          </BaseSectionLabel>
+          <ChunkPanel />
+        </div>
+        <PromptInput
           v-model="posePrompt"
-          type="textarea"
           placeholder="twisting to look back, reaching toward the viewer…"
+          :errors="poseLive.errors.value"
+          :spans="poseLive.chunks.value"
+          :marks="poseLive.marks.value"
+        />
+        <PromptIssues
+          :errors="poseLive.errors.value"
+          :notices="poseLive.notices.value"
         />
 
         <ResolvedStrip

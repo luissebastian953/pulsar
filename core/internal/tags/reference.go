@@ -38,8 +38,15 @@ type refPost struct {
 
 // pickConsensusReference: candidates must carry every hair-design tag that
 // ≥50% of the sample carries (the consensus design), pass rating/format
-// gates, and depict the character alone (single character tag). Highest
-// score wins.
+// gates, and depict the character alone (single character tag). A
+// default-outfit candidate always beats a costumed one; within a tier the
+// highest effective score wins.
+//
+// Rating is general-only. The reference conditions the whole render
+// (outfit, body, pose — not just the face), and nobody chose this image:
+// a sensitive-rated pick drags a neutral prompt toward it. The live
+// Castorice sample was 32/50 sensitive, and a ghost-costume post at
+// score 142 beat every general one under the old g/s gate.
 func pickConsensusReference(posts []refPost, canonical string, forbidden map[string]bool) *refPost {
 	if len(posts) == 0 {
 		return nil
@@ -56,11 +63,11 @@ func pickConsensusReference(posts []refPost, canonical string, forbidden map[str
 			required = append(required, t)
 		}
 	}
-	var best *refPost
+	var best, bestCostumed *refPost
 	for i := range posts {
 		p := &posts[i]
-		if p.Rating != "g" && p.Rating != "s" {
-			continue
+		if p.Rating != "g" {
+			continue // the query asks for rating:g; this re-checks the response
 		}
 		switch p.FileExt {
 		case "jpg", "jpeg", "png":
@@ -88,11 +95,37 @@ func pickConsensusReference(posts []refPost, canonical string, forbidden map[str
 		if !ok {
 			continue
 		}
-		if best == nil || effectiveScore(p) > effectiveScore(best) {
-			best = p
+		slot := &best
+		if p.costumed() {
+			slot = &bestCostumed
+		}
+		if *slot == nil || effectiveScore(p) > effectiveScore(*slot) {
+			*slot = p
 		}
 	}
-	return best
+	if best != nil {
+		return best
+	}
+	return bestCostumed // alternates only when nothing else qualifies
+}
+
+// costumeTag: alternate outfits (every *_costume: alternate_costume,
+// official_alternate_costume, halloween_costume, ghost_costume, …) and
+// cosplay/event themes. The reference imports its outfit into the render,
+// so the default costume is the identity. A tier, not a score penalty:
+// Danbooru scores run into the hundreds, so a fixed penalty lets a popular
+// costume post outrank every canonical one.
+func costumeTag(t string) bool {
+	return strings.HasSuffix(t, "_costume") || t == "cosplay" || t == "halloween" || t == "christmas"
+}
+
+func (p *refPost) costumed() bool {
+	for _, t := range strings.Fields(p.TagGen) {
+		if costumeTag(t) {
+			return true
+		}
+	}
+	return false
 }
 
 // effectiveScore biases toward reference-friendly compositions: a neutral
@@ -111,10 +144,6 @@ func effectiveScore(p *refPost) int {
 		if hasTag(tags, t) {
 			s -= 60
 		}
-	}
-	// default costume is the identity; alternates only when nothing else
-	if hasTag(tags, "alternate_costume") || hasTag(tags, "official_alternate_costume") {
-		s -= 40
 	}
 	// face-rich framings condition identity best (full_body imports outfit)
 	for _, t := range []string{"upper_body", "portrait"} {
@@ -156,7 +185,11 @@ func hasAny(spacePadded string, set map[string]bool) bool {
 // download (pass ingest.MaxBytes). nil bytes = no suitable reference.
 func (l *Live) ConsensusReference(ctx context.Context, canonical string, maxBytes int64) ([]byte, int, bool, error) {
 	q := url.Values{}
-	q.Set("tags", canonical+" solo")
+	// rating:g in the query, not just the filter: the consensus sample and
+	// the candidate pool are then all general posts (50 instead of the 13
+	// a mixed sample held for Castorice). Metatag, so it stays within
+	// Danbooru's anonymous two-tag limit.
+	q.Set("tags", canonical+" solo rating:g")
 	q.Set("limit", "50")
 	var posts []refPost
 	if err := l.getJSON(ctx, "/posts.json?"+q.Encode(), &posts); err != nil {

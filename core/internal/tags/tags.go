@@ -5,11 +5,14 @@ package tags
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"pulsar/core/internal/prompt"
 )
 
 type Store struct {
@@ -28,10 +31,9 @@ type Suggestion struct {
 }
 
 // Normalize maps user input to tag-name form: lowercase, trimmed,
-// whitespace runs collapsed to single underscores.
-func Normalize(s string) string {
-	return strings.Join(strings.Fields(strings.ToLower(s)), "_")
-}
+// whitespace runs collapsed to single underscores. One normalisation
+// exists; it lives in the pure prompt package.
+func Normalize(s string) string { return prompt.Normalize(s) }
 
 // ParseForbidden splits the FORBIDDEN_TAG_UC env value into normalized
 // tag names. The sentinel watch list and the reference-fetch gate both
@@ -44,6 +46,47 @@ func ParseForbidden(forbiddenUC string) []string {
 		}
 	}
 	return out
+}
+
+// WatchSet is the prompt/reference watch set: the hard-coded floor ∪
+// FORBIDDEN_TAG_UC. Config can only ADD tags — the floor never shrinks
+// (fail closed; CLAUDE.md non-negotiables). NewLive and the compliance
+// prompt check share this one function.
+func WatchSet(forbiddenUC string) map[string]bool {
+	set := make(map[string]bool, len(forbiddenRefFloor))
+	for t := range forbiddenRefFloor {
+		set[t] = true
+	}
+	for _, t := range ParseForbidden(forbiddenUC) {
+		set[t] = true
+	}
+	return set
+}
+
+// WatchFloor lists the hard-coded floor (sorted) — for tests that must
+// prove the floor holds without spelling its terms out.
+func WatchFloor() []string {
+	out := make([]string, 0, len(forbiddenRefFloor))
+	for t := range forbiddenRefFloor {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Watched reports whether any match form of a tag name is in the set
+// (prompt.MatchForms; the set's own entries compared with "_" removed too).
+func Watched(set map[string]bool, name string) bool {
+	forms := prompt.MatchForms(name)
+	for w := range set {
+		sq := strings.ReplaceAll(w, "_", "")
+		for _, f := range forms {
+			if f == w || f == sq {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // escapeLike makes s literal inside a LIKE pattern — tag names are full of

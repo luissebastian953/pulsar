@@ -50,6 +50,7 @@ class names:
 
   --color-beam: #E8F4FF;
   --color-warn: #FFB86B;
+  --color-danger: #FF5A5F;  /* prompt errors — the server will refuse it */
 
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -174,6 +175,7 @@ beat — rotate the beam or pulse the ring opacity. It's the name's payoff.
 | `/pose` | pose references — spec'd |
 | `/manga` | phase 7 |
 | `/history` | gallery |
+| `/inspect` | image inspector — read the generation metadata of a PNG / JPEG / WebP, import it into `/create` ([below](#image-inspector)) |
 | `/login` | age-gate lives here (see `docs/compliance.md`) |
 
 Both `/create` and `/pose` share the same shell: header, composer rail, stage. Only
@@ -191,8 +193,149 @@ the composer differs.
 
 **Composer**
 - `PromptBox` (textarea + mode toggle) · `TagInput` (Reka Combobox) ·
-  `Fold` (`<details>` + state badge) · `CharacterCard` · `ReferenceUpload` ·
-  `AspectSelect` · `BatchSegment` · `AdvancedPanel`
+  `Fold` (`<details>` + state badge) · `StylePicker` (preset cards from
+  `GET /styles`, disabled when the LoRA is missing) · `CharacterCard` ·
+  `ReferenceUpload` · `AspectSelect` · `BatchSegment` · `AdvancedPanel`
+
+**Prompt validation** (docs/tagdb.md#weighting)
+- Core owns the grammar; orbit never parses or builds prompt syntax. Every
+  prompt surface — Describe (chips in tags mode, the textarea in plain mode),
+  Undesired content, each `CharacterCard` — is validated live through
+  `usePromptParse`: a debounced `POST /prompt/parse` with the surface kind
+  and the active lineage (stale answers dropped). `/generate`'s located 400
+  (`{error, code, field, start, end, tag, hint}`, `field` = `prompt` |
+  `negative` | `characters.N`) is mapped back onto the same field while its
+  text is unchanged; a 400 inside a folded section opens the fold.
+- Offsets are UTF-16 code units — JS string indices, no conversion. In tags
+  mode chips are joined with `", "` exactly as sent, so an error span maps to
+  the chips it overlaps (`utils/prompt-issues.ts`).
+- An error shows four ways: the offending chip red and bold
+  (`BaseTagChip invalid`), or the offending span marked by a mirror layer
+  behind a transparent textarea (`BaseInput highlights`; caret and selection
+  stay native); a red outline on the input (`invalid`); the input's label red
+  and bold (`BaseSectionLabel` / `BaseFold` / the character label); and the
+  message with its hint below the input (`PromptIssues`). All colour comes
+  from `--color-danger`.
+- Notices (relocated to Undesired Content, converted from SD syntax,
+  calibrated for the lineage, unclosed `w::` section) render quietly under
+  the input in `text-faint`.
+- Chips that carry weighting syntax keep their spaces (the space before a
+  closing `::` is load-bearing); plain chips normalise to tag-name form.
+- Plain mode sends `/translate`'s `prompt` (the grounded tags in NovelAI
+  syntax, weights kept), not bare canonical names.
+- History round-trip: editor boxes restore from the stored structured tags
+  whose `source` is `user` (their `nai` form) — never the safety block,
+  `DEFAULT_UC`, quality or style tags, which core re-adds; `HistoryDetail`
+  displays from tags. Legacy rows without tags fall back to the string, and
+  core's negative dedupe neutralises the safety copies they carry.
+
+<a id="prompt-chunks"></a>
+**Prompt chunks** (docs/architecture.md#prompt-chunks)
+- A chunk is a named, reusable snippet. The reference token is
+  `!macro:Name!`. **Orbit inserts tokens; core resolves them** — expansion,
+  nesting, limits, errors and every offset are core's. Orbit only recognises
+  where a token is (`utils/chunks.ts`) so it can insert, rename, tint and
+  send it; it never expands one.
+- `@` is only an editor trigger (`useChunkPicker` + `ChunkPicker`): at the
+  start, after whitespace or after a comma it opens the picker; the query
+  runs to the caret (spaces allowed, a comma closes it); ArrowUp/Down, Enter
+  or Tab, Escape, closes 150 ms after blur. Ranking: name starts-with,
+  contains, subsequence; the same on "Category: name"; then content. Picking
+  writes the token into a textarea, or adds a chunk chip in tags mode (the
+  chip is the token; `normalize()` leaves it verbatim).
+- Storage: `useChunks` is the single owner of
+  `useLocalStorage('pulsar.chunks.v1')` (collapsed categories in
+  `pulsar.chunks.collapsed`), with JSON export/import — no table, core has no
+  identity. Every request (`/generate`, `/prompt/parse`, `/translate`) carries
+  only the chunks its text references, nested ones included. Names: trimmed,
+  case-sensitive, unique, ≤ 64 chars, none of `! , | { } [ ] ::`; ≤ 256
+  chunks, ≤ 4 KiB each.
+- `ChunkPanel` (a popover on desktop, a bottom sheet on a phone; the button
+  sits in the prompt box header) has two tabs. *Prompt Chunks*: Uncategorized
+  first, then categories; click inserts at the last-focused prompt field's
+  caret (a toast if none was focused), ✎ edits, drag or Alt+←/→ reorders.
+  `ChunkForm` validates content through `/prompt/parse` before saving and
+  shows core's located errors. *Settings*: see below.
+- Colours are a fixed palette, `--color-chunk-1…8`, stored by key and applied
+  as `data-color` on a `.chunk-color` element (which sets `--chip`). Picked
+  with Reka's `ColorSwatchPicker`. No free hex.
+- Rendering: `PromptInput` (the prompt textarea: `BaseInput` + picker) paints
+  each resolved reference core located in its chunk's colour; the caret
+  inside a token shows its expansion; a double-click bakes it into plain text
+  by core's span. `BaseInput highlights` ranges are typed
+  (`error | chunk | op | up | down`); an error always wins, a chunk is never
+  tinted by weight.
+- Rename rewrites the token in the live fields, the other chunks, saved
+  configs and pose presets. Delete bakes references first (by core's spans),
+  so none dangle; delete-category moves its chunks to Uncategorized.
+- A saved config stores a copy of the chunks it references and recreates
+  missing ones on apply. History restore shows a token only where today's
+  chunk still resolves to exactly the stored tags (same hash, same tags);
+  otherwise the expanded tags are restored.
+- Settings (per browser): `pulsar.settings.tagSuggestions` — off silences
+  only the tag autocomplete popup (`useTagAutocomplete.search`); the `@`
+  picker, the commit keys and the resolved-strip previews keep working. A
+  picker query is never sent to `/tags`, the live lookup or `/translate`,
+  whatever the setting. `pulsar.settings.highlightEmphasis` (on by default)
+  tints core's `marks` in NovelAI units: `--color-emph-up` / `-down` at
+  `0.2 + 0.4·clamp(|w−1|)` (nothing within 0.01 of 1), `--color-emph-op` at
+  0.5 for operators; in tags mode the chip is tinted. Marks arrive with the
+  debounced parse and are absent while the surface has a parse error.
+- `pulsar.settings.downloadMetadata` (on by default; "Download clean" in the
+  Settings tab and beside the history modal's Download button turns it off).
+  On: downloads fetch `/images/{id}?meta=1` and carry the prompt and settings
+  (`utils/download.ts` `downloadUrl`, used by `HistoryDetail` and
+  `useHistoryPage`). Off: the plain URL, whose only metadata is the
+  AI-generated mark core adds to every served image. What is and is not
+  written: docs/compliance.md#output-metadata.
+- `useChunks` and `usePromptSettings` are page-wide singletons in a detached
+  effect scope: they must keep persisting after the component that first
+  asked for them unmounts.
+
+<a id="image-inspector"></a>
+**Image inspector** (`/inspect`, and drop-onto-`/create`)
+- `pages/inspect.vue`: drop (`useDropZone`), pick (`useFileDialog`) or paste a
+  PNG, JPEG or WebP. The file is parsed by `useImageMeta` in a **Web Worker**
+  (`workers/imgmeta.worker.ts`, terminated on result, timeout or supersede) —
+  never on the main thread, and never uploaded: there is no core endpoint
+  that accepts an image just to read it (one ingest path).
+- `MetaView` renders the result. Header: generator, Software, model/Source.
+  **"Signed by NovelAI ✓" appears only when the signature result is `valid`;
+  every other outcome shows nothing.** A Simplified / Raw toggle is persisted
+  in `pulsar.inspect.raw`; Raw lists every metadata entry with its key and
+  container. Readers: NovelAI (PNG text, WebP EXIF, stealth alpha), A1111 /
+  Forge, ComfyUI, SwarmUI, InvokeAI, pulsar (`utils/imgmeta/`).
+- **Every string from a file is untrusted.** It is rendered with `{{ }}` only
+  — no `v-html`, no auto-linking, never as a URL or a path — with control and
+  bidi characters made visible (`escapeControlChars`). The app holds a bearer
+  token; `tests/meta-view.test.ts` pins that HTML/script payloads create no
+  element.
+- `MetaImportDialog` ("What do you want to do with this image?") is the one
+  import dialog, opened from `/inspect` and by dropping an image on `/create`.
+  Defaults: **prompt, Undesired Content and characters on; settings and seed
+  off.** "Settings" is a bucket-snapped size and steps only — guidance,
+  sampler, schedule and rescale are never imported (settings don't transfer
+  between lineages), and the patch type (`MetaImport`) has no field for them.
+- Import logic is `utils/meta-import.ts` (`buildMetaImport`). Orbit owns no
+  grammar: every text goes through `POST /prompt/parse` with `clean: true`,
+  which drops `<lora:…>`, `embedding:…`, `|` and `||…||` with notices, and
+  the result is built from `tags[].nai` and `relocated`. On top of that:
+  NovelAI `actual_prompts` are preferred; NovelAI's automatic quality suffix
+  and UC preset are stripped when `tag_hint_qt` / `tag_hint_uc_preset` say
+  they were added (tables hold only values seen in real metadata); character
+  UCs are merged into the main UC with a notice; negative-weight tags move to
+  the UC; a pulsar download imports its `nai` text (weights as typed). Local
+  prompt chunks are put back only where a whole-tag run equals a chunk of at
+  least two tags, with a notice — never by substring. Text core cannot parse
+  is imported as written, so the editor's live validation marks it.
+- The result is a **partial** patch handed over with `usePendingImport()`
+  (not `usePendingConfig()`: a full config would reset every setting the
+  import must leave alone); `useCreateComposer.applyImport` writes only the
+  fields it carries. "Use as base image / reference" hands the `File` to the
+  composer, which uploads it through `useImageUpload().upload` — the normal
+  `POST /uploads` path, `CheckUpload` included. Uploads accept WebP too.
+- Imported text is ordinary editor text: validated live, and checked by
+  `CheckPrompt` at `/generate` like anything typed.
 
 **Stage**
 - `Canvas` (aspect-matched, empty/progress/result states) · `ProgressBar` (SSE) ·
@@ -201,6 +344,9 @@ the composer differs.
 
 **Chrome**
 - `Header` (animated mark, nav, model chip, credits) · `Toast` · `AgeGate`
+- Navigation is Create · Pose · History · Inspect, in the header (desktop)
+  and `base/TabBar` (mobile). Four tabs are 90 px each at a 360 px viewport;
+  a fifth needs a re-check.
 
 ---
 

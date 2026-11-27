@@ -1,18 +1,29 @@
 <script setup lang="ts">
-import type { UploadResult } from '~/types/api'
+import type { PromptIssue, UploadResult } from '~/types/api'
 
 export interface Props {
   index: number
+  /** lineage for live validation (calibration notices are per lineage) */
+  lineage?: string
+  /** core's /generate 400 for this character, while its text is unchanged */
+  serverErrors?: PromptIssue[]
 }
 
 export interface Emits {
   remove: []
+  /** whether this card's prompt currently has an error (fold label) */
+  invalid: [value: boolean]
 }
 
-defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), { lineage: '', serverErrors: () => [] })
 const emit = defineEmits<Emits>()
 const enabled = defineModel<boolean>('enabled', { required: true })
 const text = defineModel<string>('text', { required: true })
+
+// each character prompt is its own surface (weights reset per box)
+const live = usePromptParse(() => text.value, 'character', () => props.lineage)
+const errors = computed(() => (live.errors.value.length ? live.errors.value : props.serverErrors))
+watch(() => errors.value.length > 0, v => emit('invalid', v), { immediate: true })
 // per-character Precise Reference (both cards need one for it to apply)
 const refId = defineModel<string>('refId', { required: true })
 
@@ -46,7 +57,11 @@ async function onRefPick(e: Event) {
         v-model="enabled"
         :title="enabled ? 'On — included in generation' : 'Off — kept, not sent'"
       />
-      <span class="text-[10.5px] text-dim">Character {{ index + 1 }}</span>
+      <span
+        class="text-[10.5px]"
+        :class="errors.length ? 'font-bold text-danger' : 'text-dim'"
+        data-test="character-label"
+      >Character {{ index + 1 }}</span>
       <span
         v-if="!enabled"
         class="text-2xs text-faint"
@@ -61,12 +76,18 @@ async function onRefPick(e: Event) {
         @click="emit('remove')"
       />
     </div>
-    <BaseInput
+    <PromptInput
       v-model="text"
-      type="textarea"
       size="small"
       placeholder="her own prompt…"
+      :errors="errors"
+      :spans="live.chunks.value"
+      :marks="live.marks.value"
       :class="!enabled && 'opacity-45'"
+    />
+    <PromptIssues
+      :errors="errors"
+      :notices="live.notices.value"
     />
     <div
       class="mt-2 flex items-center gap-2"
@@ -98,7 +119,7 @@ async function onRefPick(e: Event) {
         />own reference
         <input
           type="file"
-          accept="image/png,image/jpeg"
+          accept="image/png,image/jpeg,image/webp"
           class="hidden"
           @change="onRefPick"
         >

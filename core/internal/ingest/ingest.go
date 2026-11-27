@@ -1,6 +1,9 @@
-// Package ingest normalizes uploaded images: decode (PNG/JPEG only) →
-// scale-and-crop to the nearest SDXL bucket → re-encode PNG, which drops
-// EXIF and every other metadata chunk (.claude/skills/core-job).
+// Package ingest normalizes uploaded images: decode (PNG, JPEG or still
+// WebP) → scale-and-crop to the nearest SDXL bucket → re-encode PNG, which
+// drops EXIF, XMP, text chunks and any pixel-LSB payload
+// (.claude/skills/core-job). It is the one ingest path: every format an
+// upload may arrive in is decoded here, and the caller runs CheckUpload on
+// the normalized PNG — never on the bytes as uploaded.
 package ingest
 
 import (
@@ -12,11 +15,19 @@ import (
 	"math"
 
 	"golang.org/x/image/draw"
+	// WebP is what NovelAI (and most hosts) hand out; decode only — the
+	// output is always PNG. Animated WebP does not decode and is refused.
+	_ "golang.org/x/image/webp"
 
 	"pulsar/core/internal/assembly"
 )
 
 const MaxBytes = 20 << 20
+
+// MaxPixels bounds the decoded size, checked from the header before any
+// pixel is decoded: a few KiB of lossless WebP or PNG can declare a
+// 16383×16383 canvas (1 GiB as RGBA).
+const MaxPixels = 50_000_000
 
 type Result struct {
 	PNG    []byte
@@ -31,12 +42,19 @@ func Normalize(data []byte) (*Result, error) {
 	if len(data) > MaxBytes {
 		return nil, fmt.Errorf("image exceeds %d bytes", MaxBytes)
 	}
-	src, format, err := image.Decode(bytes.NewReader(data))
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
-	if format != "png" && format != "jpeg" {
-		return nil, fmt.Errorf("unsupported format %q (png or jpeg)", format)
+	if format != "png" && format != "jpeg" && format != "webp" {
+		return nil, fmt.Errorf("unsupported format %q (png, jpeg or webp)", format)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > MaxPixels {
+		return nil, fmt.Errorf("image is %dx%d; the limit is %d pixels", cfg.Width, cfg.Height, MaxPixels)
+	}
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
 	}
 
 	sb := src.Bounds()

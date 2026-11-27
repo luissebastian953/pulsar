@@ -25,6 +25,12 @@ const { presets, save: savePreset } = usePresets()
 const { presets: posePresets, save: savePosePreset } = usePosePresets()
 const pendingConfig = usePendingConfig()
 const pendingPoseConfig = usePendingPoseConfig()
+const chunkApi = useChunkApi()
+
+// stored structure when present (no ComfyUI escapes); legacy rows show the string
+function promptLine(j: JobPayload) {
+  return j.params.prompt_tags ? j.params.prompt_tags.map(t => tagLabel(t)).join(', ') : j.params.prompt
+}
 
 const selected = ref<JobPayload | null>(null)
 const detailOpen = ref(false)
@@ -68,7 +74,9 @@ async function useConfig() {
     return
   }
 
-  pendingConfig.value = paramsToPresetConfig(selected.value.params)
+  // chunk provenance: a stored tag run becomes its `!macro:Name!` again only
+  // where today's chunk still resolves to exactly those tags (decision D8)
+  pendingConfig.value = await chunkApi.restoreConfig(selected.value.params)
   await navigateTo('/create')
 }
 
@@ -159,9 +167,9 @@ function onSaveName(name: string) {
           <div class="border-t border-line px-2.5 py-2">
             <div
               class="truncate font-mono text-2xs text-dim"
-              :title="j.params.prompt"
+              :title="promptLine(j)"
             >
-              {{ j.params.prompt }}
+              {{ promptLine(j) }}
             </div>
             <div class="mt-1 font-mono text-2xs text-faint">
               {{ j.params.width }} × {{ j.params.height }} · seed {{ j.params.seed }}

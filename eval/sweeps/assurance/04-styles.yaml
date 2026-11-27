@@ -1,0 +1,118 @@
+# Capability 4 — art styles and style mixing, on one fixed pre-cutoff
+# character (furina / himeko: both in the WD head, so identity is tagger-
+# measurable here) and identical seeds. Style presence = WD probability of
+# the style tag; identity = character_hit (WD) now, CCIP when refs exist.
+# ukiyo-e / anime screencap / pixel art are outside the WD vocabulary and
+# report as unmeasurable (rubric only). Artist-tag blends and image-reference
+# style need a calibrated CSD and are report-only (README).
+# LoRA + reference cannot combine on this stack (api.go), so the reference
+# cases carry no `style`.
+name: assurance-styles
+seeds: [7, 42, 1234, 7777, 3, 11, 21, 88, 101, 202, 303, 404, 505, 606, 707, 808]
+params:
+  lineage: noobai
+  checkpoint: noobai-xl-vpred.safetensors
+  auto_reference: false
+columns: 8
+cases:
+  # --- baseline
+  - name: base
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, simple background"
+    expect: ["furina (genshin impact)"]
+    identity: refs/furina_(genshin_impact)
+  # --- single style tag swaps (NovelAI tutorial list ∩ WD vocabulary), quality on/off
+  - name: tag-watercolor
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, simple background, watercolor (medium), traditional media"
+    expect: ["furina (genshin impact)", "watercolor (medium)", traditional media]
+  - name: tag-watercolor-qoff
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, simple background, watercolor (medium), traditional media"
+    request: { quality_tags: false }
+    expect: ["furina (genshin impact)", "watercolor (medium)", traditional media]
+  - name: tag-art-nouveau
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, art nouveau"
+    expect: ["furina (genshin impact)", art nouveau]
+  - name: tag-limited-palette
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, simple background, limited palette"
+    expect: ["furina (genshin impact)", limited palette]
+  - name: tag-1990s
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, simple background, 1990s (style), retro artstyle"
+    expect: ["furina (genshin impact)", "1990s (style)", retro artstyle]
+  - name: tag-ukiyo-e                 # unmeasurable by WD: rubric only
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, ukiyo-e"
+    expect: ["furina (genshin impact)", ukiyo-e]
+    report_only: true
+  # --- two-style prompt blend, weight ramp (expect: Spearman ρ ≥ 0.6 between w and p(style A))
+  - name: blend-w02
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, (limited palette:0.2), (watercolor (medium):0.8)"
+    expect: ["furina (genshin impact)", limited palette, "watercolor (medium)"]
+  - name: blend-w05
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, (limited palette:0.5), (watercolor (medium):0.5)"
+    expect: ["furina (genshin impact)", limited palette, "watercolor (medium)"]
+  - name: blend-w08
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer, (limited palette:0.8), (watercolor (medium):0.2)"
+    expect: ["furina (genshin impact)", limited palette, "watercolor (medium)"]
+  # --- shipped style presets (style_presets table): do their carriers register?
+  - name: preset-light-novel
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer"
+    request: { style: light-novel }
+    expect: ["furina (genshin impact)", gradient hair, sparkling eyes, depth of field, blurry background]
+  - name: preset-anime-90s
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer"
+    request: { style: anime-90s }
+    expect: ["furina (genshin impact)", "1990s (style)", retro artstyle, anime coloring]
+  - name: preset-flat-color
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer"
+    request: { style: flat-color }
+    expect: ["furina (genshin impact)", flat color, anime coloring]
+  - name: preset-watercolor
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer"
+    request: { style: watercolor }
+    expect: ["furina (genshin impact)", "watercolor (medium)", traditional media, painterly]
+  - name: preset-sketch
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer"
+    request: { style: sketch }
+    expect: ["furina (genshin impact)", sketch, lineart, monochrome, greyscale]
+  - name: preset-chibi
+    prompt: "furina (genshin impact), 1girl, solo, upper body, looking at viewer"
+    request: { style: chibi }
+    expect: ["furina (genshin impact)", chibi]
+  # --- HSR house-style preset, LoRA weight ramp (request LoRA strength wins over the preset's 0.8)
+  - name: hsr-w04
+    prompt: "himeko (honkai: star rail), 1girl, solo, mature female, red hair, very long hair, yellow eyes, sitting, holding cup, teacup, window, indoors, day, three-quarter view, looking at viewer, cowboy shot"
+    request: { style: hsr, loras: [{ name: "honkai star rail_v3.safetensors", strength: 0.4 }] }
+    expect: ["himeko (honkai: star rail)", red hair, yellow eyes, teacup, gradient hair, glint, sparkle, blurry background]
+  - name: hsr-w06
+    prompt: "himeko (honkai: star rail), 1girl, solo, mature female, red hair, very long hair, yellow eyes, sitting, holding cup, teacup, window, indoors, day, three-quarter view, looking at viewer, cowboy shot"
+    request: { style: hsr, loras: [{ name: "honkai star rail_v3.safetensors", strength: 0.6 }] }
+    expect: ["himeko (honkai: star rail)", red hair, yellow eyes, teacup, gradient hair, glint, sparkle, blurry background]
+  - name: hsr-w08
+    prompt: "himeko (honkai: star rail), 1girl, solo, mature female, red hair, very long hair, yellow eyes, sitting, holding cup, teacup, window, indoors, day, three-quarter view, looking at viewer, cowboy shot"
+    request: { style: hsr }
+    expect: ["himeko (honkai: star rail)", red hair, yellow eyes, teacup, gradient hair, glint, sparkle, blurry background]
+  - name: hsr-w10
+    prompt: "himeko (honkai: star rail), 1girl, solo, mature female, red hair, very long hair, yellow eyes, sitting, holding cup, teacup, window, indoors, day, three-quarter view, looking at viewer, cowboy shot"
+    request: { style: hsr, loras: [{ name: "honkai star rail_v3.safetensors", strength: 1.0 }] }
+    expect: ["himeko (honkai: star rail)", red hair, yellow eyes, teacup, gradient hair, glint, sparkle, blurry background]
+  # --- image references (IP-Adapter): style from an HSR render, identity from a Himeko render.
+  #     Style similarity needs a calibrated CSD → report-only; identity via character_hit / CCIP.
+  - name: ref-style-04
+    prompt: "himeko (honkai: star rail), 1girl, solo, mature female, red hair, yellow eyes, upper body, looking at viewer, simple background"
+    request: { reference: ../../benchmarks/out/acheron-c45b.png, ref_mode: style, ref_strength: 0.4, ref_fidelity: 0.5 }
+    expect: ["himeko (honkai: star rail)", red hair, yellow eyes]
+    report_only: true
+  - name: ref-style-07
+    prompt: "himeko (honkai: star rail), 1girl, solo, mature female, red hair, yellow eyes, upper body, looking at viewer, simple background"
+    request: { reference: ../../benchmarks/out/acheron-c45b.png, ref_mode: style, ref_strength: 0.7, ref_fidelity: 0.5 }
+    expect: ["himeko (honkai: star rail)", red hair, yellow eyes]
+    report_only: true
+  - name: ref-character
+    # no character tag in the prompt: identity must come from the reference image
+    prompt: "1girl, solo, upper body, looking at viewer, simple background, smile"
+    request: { reference: ../../benchmarks/out/himeko-1234.png, ref_mode: character, ref_strength: 0.55, ref_fidelity: 0.5 }
+    expect: [red hair, yellow eyes, mole under eye]
+    identity: ../../benchmarks/out/himeko-1234.png
+  - name: ref-character-style
+    prompt: "1girl, solo, upper body, looking at viewer, simple background, smile"
+    request: { reference: ../../benchmarks/out/himeko-1234.png, ref_mode: character_style, ref_strength: 0.7, ref_fidelity: 0.5 }
+    expect: [red hair, yellow eyes, mole under eye]
+    identity: ../../benchmarks/out/himeko-1234.png

@@ -31,6 +31,25 @@
 
   --color-beam: #E8F4FF;
   --color-warn: #FFB86B;
+  /* validation errors: a prompt the server will refuse (red, not warn-amber) */
+  --color-danger: #FF5A5F;
+
+  /* Emphasis highlight (Settings → Highlight Emphasis): text weighted up,
+     text weighted down, and the operators that set the weight */
+  --color-emph-up:   #FF8A4C;
+  --color-emph-down: #4CA8FF;
+  --color-emph-op:   #7ACC29;
+
+  /* Prompt-chunk palette — the only colours a chunk or category can take
+     (stored by key, chunk-1…8; chunk-1 is the neutral default) */
+  --color-chunk-1: #9C9CA4;
+  --color-chunk-2: #FF7A7A;
+  --color-chunk-3: #FFA05C;
+  --color-chunk-4: #EACB5A;
+  --color-chunk-5: #5FD38D;
+  --color-chunk-6: #4FD1C5;
+  --color-chunk-7: #6AA8FF;
+  --color-chunk-8: #B79CFF;
 
   --font-sans: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -74,6 +93,54 @@
   .tag-chip[data-cat="copyright"] { --chip: var(--color-t-copyright); }
   .tag-chip[data-cat="artist"]    { --chip: var(--color-t-artist); }
   .tag-chip[data-cat="meta"]      { --chip: var(--color-t-meta); }
+  /* a chip the prompt parser rejected — red and bold whatever its category */
+  .tag-chip[data-invalid] { --chip: var(--color-danger); font-weight: 700; }
+
+  /* Prompt chunks: a palette key on data-color drives --chip, the same
+     custom property the tag chip reads — a user-picked colour is data, and
+     only these eight tokens exist */
+  .chunk-color[data-color="chunk-1"] { --chip: var(--color-chunk-1); }
+  .chunk-color[data-color="chunk-2"] { --chip: var(--color-chunk-2); }
+  .chunk-color[data-color="chunk-3"] { --chip: var(--color-chunk-3); }
+  .chunk-color[data-color="chunk-4"] { --chip: var(--color-chunk-4); }
+  .chunk-color[data-color="chunk-5"] { --chip: var(--color-chunk-5); }
+  .chunk-color[data-color="chunk-6"] { --chip: var(--color-chunk-6); }
+  .chunk-color[data-color="chunk-7"] { --chip: var(--color-chunk-7); }
+  .chunk-color[data-color="chunk-8"] { --chip: var(--color-chunk-8); }
+  /* a chunk chip in the tag input: its palette colour wins over the category */
+  .tag-chip.chunk-color[data-color] { border-style: dashed; }
+  .tag-chip.chunk-color[data-color][data-invalid] { --chip: var(--color-danger); }
+
+  /* a `!macro:Name!` token in a textarea's highlight layer */
+  .chunk-mark {
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--chip) 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chip) 50%, transparent);
+  }
+  /* a swatch / dot filled with the chunk colour */
+  .chunk-dot { background: var(--chip); }
+  /* a row in the @ picker and a chip in the chunk panel */
+  .chunk-row { border-left: 3px solid transparent; }
+  .chunk-row[aria-selected="true"] {
+    border-left-color: var(--chip);
+    background: color-mix(in srgb, var(--chip) 13%, transparent);
+  }
+  .chunk-pill {
+    border: 1px solid color-mix(in srgb, var(--chip) 38%, transparent);
+    background: color-mix(in srgb, var(--chip) 13%, transparent);
+    color: var(--chip);
+  }
+  .chunk-pill:hover { background: color-mix(in srgb, var(--chip) 22%, transparent); }
+  .chunk-pill[data-drop] { box-shadow: -2px 0 0 0 var(--color-text); }
+
+  /* Emphasis highlight: --emph is the 0..1 strength core's weight maps to */
+  .emph-mark { border-radius: 2px; }
+  .emph-mark[data-kind="up"]   { background: color-mix(in srgb, var(--color-emph-up) calc(var(--emph) * 100%), transparent); }
+  .emph-mark[data-kind="down"] { background: color-mix(in srgb, var(--color-emph-down) calc(var(--emph) * 100%), transparent); }
+  .emph-mark[data-kind="op"]   { background: color-mix(in srgb, var(--color-emph-op) calc(var(--emph) * 100%), transparent); }
+  /* the same on a tag chip (tags mode): the weight tints the chip's fill */
+  .tag-chip[data-emph="up"]   { background: color-mix(in srgb, var(--color-emph-up) calc(var(--emph) * 100%), transparent); }
+  .tag-chip[data-emph="down"] { background: color-mix(in srgb, var(--color-emph-down) calc(var(--emph) * 100%), transparent); }
 
   /* Dropped-concept chip — struck through, amber, never swallowed */
   .dropped-chip {
@@ -115,6 +182,11 @@
     letter-spacing: 0.13em;
     text-transform: uppercase;
     color: var(--color-faint);
+  }
+  /* the label of an input whose prompt has an error */
+  .section-label[data-invalid] {
+    color: var(--color-danger);
+    font-weight: 700;
   }
 
   /* Focus ring used across interactive elements */

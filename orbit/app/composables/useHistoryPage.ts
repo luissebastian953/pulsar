@@ -4,6 +4,7 @@ import type { JobPayload } from '~/types/api'
 // download/delete actions. The detail modal and preset glue stay in the page.
 export function useHistoryPage() {
   const api = useApi()
+  const settings = usePromptSettings()
 
   const jobs = ref<JobPayload[]>([])
   const loaded = ref(false)
@@ -49,7 +50,7 @@ export function useHistoryPage() {
     dlTotal.value = targets.length
 
     for (const j of targets) {
-      const url = api.imageUrl(j.image_url ?? imgOf(j))
+      const url = downloadUrl(api.imageUrl(j.image_url ?? imgOf(j)), settings.downloadMetadata.value)
       await downloadImage(url, `pulsar-${j.params.seed ?? 'image'}-${j.id.slice(0, 8)}.png`)
       dlDone.value++
       // cached fetches resolve instantly; pace the clicks so the browser keeps them all

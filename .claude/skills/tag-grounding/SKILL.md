@@ -117,8 +117,26 @@ look.
 Earlier tags weigh more. `assembly` sorts grounded tags by `post_count` descending.
 Quality tags precede everything.
 
-Don't infer prompt weighting `(tag:1.3)` — expose it in the editor as the escape
-hatch for real-but-weak tags.
+Don't infer prompt weighting `1.3::tag ::` — expose it in the editor as the escape
+hatch for real-but-weak tags. `/translate` parses weights before the LLM and
+grounds each weighted stretch separately; the LLM never sees an operator
+(docs/tagdb.md#weighting).
+
+## Prompt chunks bypass autocomplete and the LLM
+
+A prompt chunk (`!macro:Name!`, docs/architecture.md#prompt-chunks) is the
+user's own tag text, saved under a name. Two rules follow:
+
+- **Never through the LLM.** `/translate` expands the references first; a tag
+  that came out of a chunk skips `Decompose` and the grounding cascade — it
+  is never rewritten and never dropped — and is appended after the grounded
+  tags (stage `chunk`; the tag DB is consulted only for its category and
+  count). Sending chunk content to the decomposer would re-interpret tags as
+  prose.
+- **Never through autocomplete.** While the `@` picker's query is in the box
+  the text is a chunk name: orbit must not send it to `/tags`,
+  `/tags/lookup` (live Danbooru) or `/translate`. A chunk chip is not a tag
+  and is not looked up for the resolved strip.
 
 ## One service, four boxes, two pages
 

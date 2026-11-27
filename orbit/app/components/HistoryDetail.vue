@@ -26,6 +26,7 @@ const emit = defineEmits<Emits>()
 const open = defineModel<boolean>('open', { required: true })
 
 const api = useApi()
+const settings = usePromptSettings()
 const p = computed(() => props.job?.params)
 
 // multi-output kinds (pose): the primary is `imageUrl`, extractions come from
@@ -51,8 +52,20 @@ const shownUrl = computed(() => {
   return role.value !== 'source' && path ? api.imageUrl(path) : props.imageUrl
 })
 
-const promptTags = computed(() =>
-  (p.value?.prompt ?? '').split(',').map(t => t.trim()).filter(Boolean))
+// displayed from the stored structure (weights shown as emitted); legacy
+// rows without it fall back to the comma split
+const promptTags = computed(() => {
+  const v = p.value
+  if (v?.prompt_tags) return v.prompt_tags.map(t => tagLabel(t))
+
+  return (v?.prompt ?? '').split(',').map(t => t.trim()).filter(Boolean)
+})
+const negativeText = computed(() => {
+  const v = p.value
+  if (v?.negative_tags) return v.negative_tags.map(t => tagLabel(t)).join(', ')
+
+  return v?.negative ?? ''
+})
 
 // labelled config rows, omitting anything the generation didn't use
 const rows = computed(() => {
@@ -76,6 +89,8 @@ const rows = computed(() => {
     { label: 'Lineage', value: v.lineage === 'noobai' ? 'NoobAI · v-pred' : 'Illustrious · eps' },
   )
 
+  if (v.style) out.push({ label: 'Style', value: v.style })
+
   if (v.checkpoint) out.push({ label: 'Base model', value: stripModelExt(v.checkpoint) })
 
   if (kind && kind !== 'txt2img') out.push({ label: 'Mode', value: kind })
@@ -89,10 +104,17 @@ const rows = computed(() => {
   return out
 })
 
+// "Download clean" (Settings): without metadata the file keeps only the
+// AI-generated mark; with it, the prompt and settings ride along
+const clean = computed({
+  get: () => !settings.downloadMetadata.value,
+  set: (v: boolean) => { settings.downloadMetadata.value = !v },
+})
+
 // network/CORS failure is swallowed — the browser tab fallback stays available
 function download() {
   const suffix = role.value !== 'source' ? `-${role.value}` : ''
-  downloadImage(shownUrl.value, `pulsar-${p.value?.seed ?? 'image'}${suffix}.png`)
+  downloadImage(downloadUrl(shownUrl.value, settings.downloadMetadata.value), `pulsar-${p.value?.seed ?? 'image'}${suffix}.png`)
 }
 </script>
 
@@ -129,14 +151,28 @@ function download() {
             class="absolute bottom-6 left-6 w-auto"
             :options="roleOptions"
           />
-          <BaseButton
-            class="absolute bottom-6 right-6 bg-surface/90 backdrop-blur"
-            variant="outline"
-            icon="lucide:download"
-            @click="download"
-          >
-            Download
-          </BaseButton>
+          <div class="absolute bottom-6 right-6 flex items-center gap-2">
+            <label
+              class="flex cursor-pointer items-center gap-2 rounded-ctrl border border-line bg-surface/90 px-2.5 py-1.5 text-xs text-dim backdrop-blur"
+              title="Download clean: leave the prompt and settings out of the file. The AI-generated mark always stays."
+            >
+              <BaseToggleSwitch
+                v-model="clean"
+                data-test="download-clean"
+              />
+              Clean
+            </label>
+            <BaseButton
+              class="bg-surface/90 backdrop-blur"
+              variant="outline"
+              icon="lucide:download"
+              :title="clean ? 'Download without prompt metadata' : 'Download with the prompt and settings embedded'"
+              data-test="download"
+              @click="download"
+            >
+              Download
+            </BaseButton>
+          </div>
         </div>
 
         <!-- config -->
@@ -165,12 +201,12 @@ function download() {
               >{{ t.replaceAll('_', ' ') }}</span>
             </div>
 
-            <template v-if="p?.negative?.trim()">
+            <template v-if="negativeText.trim()">
               <div class="section-label mb-1.5 mt-4">
                 Negative
               </div>
               <div class="rounded-ctrl border border-line bg-void px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-faint">
-                {{ p.negative }}
+                {{ negativeText }}
               </div>
             </template>
 

@@ -156,6 +156,17 @@ Two runtime realities: the native runner swaps `onnxruntime-gpu` for plain
 preprocessors download their annotator weights (~200 MB each) on first use —
 the container needs network on the first pose run, or pre-warm after build.
 
+## SaveImage embeds the graph unless told not to
+
+`SaveImage` writes the full API graph into a `prompt` tEXt chunk of every PNG
+— the safety negative, model filenames and `LoadImage` upload IDs included —
+unless ComfyUI is launched with `--disable-metadata`. Both launchers
+(`comfy/Dockerfile`, `comfy/run-native.sh`) pass it; keep it on any new one.
+The flag is not a guarantee: `SaveSVGNode` ignores it and custom save nodes do
+as they please, so core strips every output regardless (`internal/pngmeta`,
+`docs/compliance.md#output-metadata`). Don't add a save node that writes its
+own metadata, and don't rely on PNG metadata surviving to the client.
+
 ## Before you submit
 
 - API format, not editor format

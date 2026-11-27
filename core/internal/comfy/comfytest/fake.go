@@ -3,9 +3,14 @@ package comfytest
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"image"
+	"image/color"
 	"image/png"
 	"io"
 	"net/http"
@@ -34,8 +39,15 @@ type Fake struct {
 	PNG []byte
 	// FailExecution makes every prompt end in an execution_error.
 	FailExecution bool
-	// TagOutputs appends the filename to /view bytes (still a valid PNG).
+	// TagOutputs makes /view return a distinct image per filename (see
+	// OutputFor), so a test can trace each delivered blob to its SaveImage
+	// node. The identity lives in the pixels: anything outside them is
+	// stripped before delivery.
 	TagOutputs bool
+	// EmbedGraph makes /view carry the last submitted graph in a `prompt`
+	// tEXt chunk, as real ComfyUI's SaveImage does without
+	// --disable-metadata.
+	EmbedGraph bool
 }
 
 func New(t *testing.T) *Fake {
@@ -93,10 +105,17 @@ func (f *Fake) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
-	ctx := r.Context()
+	// r.Context() is not cancelled when a hijacked WebSocket closes, so the
+	// reader doubles as the liveness signal: once the client closes, cancel
+	// and leave. Without this a stale handler from a finished job keeps
+	// competing for `submitted` — and wins, channel receivers being FIFO —
+	// so the second generation in an env never sees its completion.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 	// consume reads so close frames are processed and the client's graceful
 	// close doesn't hang until its timeout
 	go func() {
+		defer cancel()
 		for {
 			if _, _, err := conn.Read(ctx); err != nil {
 				return
@@ -160,10 +179,37 @@ func (f *Fake) handleHistory(w http.ResponseWriter, r *http.Request) {
 
 func (f *Fake) handleView(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
-	w.Write(f.PNG)
-	if f.TagOutputs {
-		w.Write([]byte(r.URL.Query().Get("filename")))
+	out := f.OutputFor(r.URL.Query().Get("filename"))
+	if f.EmbedGraph {
+		out = WithText(out, "prompt", string(f.LastGraph()))
 	}
+	w.Write(out)
+}
+
+// OutputFor returns the pixels /view serves for filename: PNG, or with
+// TagOutputs a 1x1 image whose colour is derived from the filename.
+func (f *Fake) OutputFor(filename string) []byte {
+	if !f.TagOutputs {
+		return f.PNG
+	}
+	sum := sha256.Sum256([]byte(filename))
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.RGBA{sum[0], sum[1], sum[2], 255})
+	var buf bytes.Buffer
+	png.Encode(&buf, img) // cannot fail on a bytes.Buffer
+	return buf.Bytes()
+}
+
+// WithText returns src with a tEXt chunk (keyword, text) spliced in right
+// after IHDR — the shape of ComfyUI's metadata. src must be a PNG.
+func WithText(src []byte, keyword, text string) []byte {
+	const ihdrEnd = 8 + 4 + 4 + 13 + 4 // signature + IHDR chunk
+	body := append([]byte("tEXt"+keyword+"\x00"), text...)
+	out := append([]byte{}, src[:ihdrEnd]...)
+	out = binary.BigEndian.AppendUint32(out, uint32(len(body)-4))
+	out = append(out, body...)
+	out = binary.BigEndian.AppendUint32(out, crc32.ChecksumIEEE(body))
+	return append(out, src[ihdrEnd:]...)
 }
 
 func (f *Fake) handleUpload(w http.ResponseWriter, r *http.Request) {

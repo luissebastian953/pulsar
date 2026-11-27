@@ -1,4 +1,5 @@
 import { useLocalStorage } from '@vueuse/core'
+import { effectScope, nextTick } from 'vue'
 import type { GenerationParams } from '~/types/api'
 
 // The /pose composer's closed tag tables. Counts are display/sort weights
@@ -107,6 +108,26 @@ export function usePosePresets() {
   return { presets, save, remove }
 }
 
+// rewritePosePresetPrompts applies a text edit to every saved pose prompt
+// (a chunk rename rewrites its `!macro:Old!` tokens).
+export function rewritePosePresetPrompts(edit: (text: string) => string) {
+  const scope = effectScope(true)
+  const presets = scope.run(() => useLocalStorage<PosePreset[]>(STORAGE_KEY, []))!
+  nextTick(() => scope.stop())
+  let changed = false
+  const next = presets.value.map((p) => {
+    const prompt = edit(p.config.prompt ?? '')
+
+    if (prompt === p.config.prompt) return p
+
+    changed = true
+
+    return { ...p, config: { ...p.config, prompt } }
+  })
+
+  if (changed) presets.value = next
+}
+
 // Same-recipe detection for the history modal's "Saved" state.
 export function poseConfigSignature(c: PoseConfig): string {
   return JSON.stringify([
@@ -122,7 +143,12 @@ const QUALITY_TAGS = new Set(['masterpiece', 'best_quality', 'very_aesthetic', '
 // applyable composer config: known tags land in their controls, the remainder
 // becomes prompt text (canonical tags ground exactly, so nothing is lost).
 export function paramsToPoseConfig(p: GenerationParams): PoseConfig {
-  let tags = p.prompt.split(',')
+  // structured rows: the user's own tags by name (quality/style/anchors are
+  // core's); legacy rows: the emitted string, split
+  const raw = p.prompt_tags
+    ? p.prompt_tags.filter(t => t.source === 'user').map(t => t.name)
+    : p.prompt.split(',')
+  let tags = raw
     .map(t => t.trim().replaceAll(' ', '_'))
     .filter(t => t && !QUALITY_TAGS.has(t) && t !== 'solo')
 

@@ -3,33 +3,84 @@
 ## Request → image
 
 ```
-1. validate + bounds-check (steps/res/batch caps)
-2. compliance: prompt pre-check ─────────────► may reject
-3. translate: NL → grounded tags   (4 boxes: prompt, UC, char prompt, char UC)
-4. assemble: quality tags + tags + defaults + settings → PromptSpec
-5. build: select template(s) + patch by node ID → API-format JSON
-6. enqueue: Postgres FOR UPDATE SKIP LOCKED
-7. route: least-busy ComfyUI process (one per GPU)
-8. execute: POST /prompt → WS progress → GET /view
-9. compliance: output classify ──────────────► may set state=blocked
-10. store: object storage + resolved params row
-11. stream: SSE to client
+0. (client) translate: NL → grounded tags via POST /translate, weights kept
+1. expand the request's prompt chunks (`!macro:Name!`), then parse every
+   prompt surface (prompt, UC, each character) ──────────► 400 + span
+2. validate + bounds-check (steps/res/batch caps); style lookup
+3. autoAnchor on parsed tags (post-cutoff characters)
+4. assemble: calibrate weights, relocate negative weights to UC, dedupe the
+   negative (safety first), emit flat escaped strings → Spec (+ structured tags)
+5. compliance: prompt check on the emitted strings ─────► may reject (422/503)
+6. build: select template(s) + patch by node ID → API-format JSON
+7. enqueue: Postgres FOR UPDATE SKIP LOCKED
+8. route: least-busy ComfyUI process (one per GPU)
+9. execute: POST /prompt → WS progress → GET /view
+10. strip: pngmeta allow-list on every output ─► malformed PNG = state=failed
+11. compliance: output classify (THE gate) ───► may set state=blocked
+12. store: object storage + resolved params row (the bytes step 11 classified)
+13. stream: SSE to client
+14. serve: GET /images/:id strips again on the way out (legacy blobs)
 ```
 
-Steps 3–5 are pure functions. Everything before step 6 is CPU-only and testable
+### Prompt chunks
+
+A chunk is a named snippet a prompt refers to as `!macro:Name!` (NovelAI's
+typeable form; zero tag names contain `!macro`). Core stores none: `/generate`,
+`/prompt/parse` and `/translate` take `chunks: [{name, content}]` — the ones
+the text references — and `prompt.Expand` splices them in before the scanner
+runs, on every user surface (prompt, negative, characters; pose included),
+never on a config or safety surface.
+
+- **Origin map.** Every expanded rune remembers the reference it came from,
+  so an error, notice or tag span inside a chunk is located on the token the
+  user typed (its UTF-16 span and its piece index); the message names the
+  chunk. `MaxBytes`/`MaxTags` apply after expansion (`too_long` on the field).
+- **Limits** (400 at decode): names trimmed, case-sensitive, unique, ≤ 64
+  chars, none of `! , | { } [ ] ::` or a line break; ≤ 64 chunks per request,
+  ≤ 4 KiB each. Nesting via `!macro:` inside content, depth ≤ 8.
+- **Located 400 codes**: `unknown_chunk`, `chunk_cycle`, `chunk_depth`,
+  `chunk_syntax` (a `!macro:` without a name or closing `!`). A token in
+  `QUALITY_TAGS`, `DEFAULT_UC`, a style row or `FORBIDDEN_TAG_UC` is
+  `chunk_in_config`: boot is refused.
+- **Compliance** needs no special case: expanded text becomes ordinary parsed
+  tags, and `CheckPrompt` re-parses the emitted strings exactly as for typed
+  text (`TestChunkTextInputsAreChecked`, `TestWatchedTagInChunkRejected`).
+- **History.** The Spec stores the expanded tags — the authoritative record —
+  and each tag that came whole out of a reference carries
+  `chunk: {name, hash}` (hash = first 16 hex of the sha256 of the chunk's
+  resolved text, nested chunks included). Chunk definitions are never stored.
+- **`/prompt/parse`** returns `chunks: [{name, hash, start, end, tag, text}]`
+  for every resolved reference (also when the text has errors) and
+  `marks: [{start, end, kind: up|down|op, w}]` locating the typed weighting
+  in NovelAI units; text that came out of a chunk is never marked.
+- **`/translate`** never sends chunk text to the LLM. Chunk tags are appended
+  after the grounded tags — as the reference itself where that is exact (so
+  `/generate` keeps provenance), written out with weights otherwise.
+
+Steps 1 and 4 are pure functions (`prompt`, `assembly`). Everything before step 7 is CPU-only and testable
 without a GPU — which is most of the interesting logic.
 
 ## Endpoints
 
 ```
-POST   /generate            → validate, enqueue, 202 {job_id}
+POST   /generate            → parse, validate, enqueue, 202 {job_id, notices}; kind=txt2img|img2img|inpaint|pose, style=<slug>;
+                               400 {error, code, field, start, end, tag, hint} on a prompt parse error
 GET    /jobs/:id            → status + resolved params
 GET    /jobs/:id/stream     → SSE: queue pos → step progress → done|blocked
-POST   /images              → upload (img2img / references / inpaint base)
+GET    /images/:id[?meta=1] → stored output (…-lineart / …-skeleton for pose roles), stripped, + the XMP AI-generated mark;
+                               ?meta=1 (downloads) adds the A1111 `parameters` and `pulsar` JSON chunks (docs/compliance.md#output-metadata)
+POST   /uploads             → image ingest (img2img / references / inpaint base + mask); PNG, JPEG or still WebP
 GET    /tags?q=&subset=     → autocomplete; subset=all|pose
-POST   /translate           → NL → grounded tags (preview before generate)
-GET    /history             → user's generations
-POST   /pose/use/:id        → skeleton → ControlNet input for /create
+GET    /tags/lookup?q=      → one tag, DB then live Danbooru
+POST   /translate           → NL → grounded tags with weights + `prompt` in NovelAI syntax (parsed first; the LLM never sees operators);
+                               {text, subset, chunks}: chunk text skips the LLM
+POST   /prompt/parse        → {text, surface, lineage, chunks, clean} → tags/runs/weights, errors[], notices[],
+                               chunks[] (resolved references) and marks[] (typed weighting) (live validation; syntax only);
+                               clean=true (import): drops <lora:…>, embedding:…, |, ||…|| with notices, returns `cleaned`
+GET    /styles              → style presets per lineage (docs/tuning.md#style-presets)
+GET    /loras, /checkpoints → installed model files
+GET    /history             → user's generations; DELETE /history[/:id]
+GET    /healthz
 ```
 
 ## Why async
@@ -115,6 +166,9 @@ See `.claude/skills/comfy-workflow/` before touching these.
   Per-process `input/` dir unless storage is shared: forward the upload to the
   process that will run the job.
 - **`compliance`** — two hooks. See `docs/compliance.md`.
+- **`pngmeta`** — pure, stdlib-only PNG chunk allow-list. Runs on every output
+  before `CheckOutput` and again in `GET /images/:id`; anything pulsar ever
+  writes into a PNG goes through it too. See `docs/compliance.md#output-metadata`.
 
 ## Storage
 
